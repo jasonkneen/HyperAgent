@@ -1,13 +1,10 @@
 import fs from "fs";
-import prettier from "prettier";
 import { HyperAgentConfig } from "@/types";
-
-import { ActionContext } from "@/types";
 
 export function initActionScript(
   actionLogFile: string,
   task: string,
-  agentConfig?: HyperAgentConfig<"Local" | "Hyperbrowser">,
+  agentConfig?: HyperAgentConfig<"Local" | "Hyperbrowser">
 ) {
   let agentConfigString: string;
   let llmComment = "";
@@ -61,14 +58,14 @@ ${llmComment}
         variables: {} as Record<string, HyperVariable>,
       };
 
-    `,
+    `
   );
 
   // Add main execution function
   fs.appendFileSync(
     actionLogFile,
     `
-` + `\n\n`,
+` + `\n\n`
   );
 }
 
@@ -80,12 +77,8 @@ export async function wrapUpActionScript(actionLogFile: string) {
     await agent.closeAgent();
     console.log("Action script complete");
 
-  `,
+  `
   );
   fs.appendFileSync(actionLogFile, `})();`);
-  const formatted = await prettier.format(
-    fs.readFileSync(actionLogFile, "utf-8"),
-    { filepath: actionLogFile },
-  );
-  fs.writeFileSync(actionLogFile, formatted);
+  fs.writeFileSync(actionLogFile, fs.readFileSync(actionLogFile, "utf-8"));
 }
