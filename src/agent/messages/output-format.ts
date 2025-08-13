@@ -1,10 +1,3 @@
-export const OUTPUT_FORMAT_FIND_ELEMENT = `
-Your response MUST be in this exact format:
-{
-  "index": 0
-}
-  `;
-
 export const OUTPUT_FORMAT = `Your response MUST be in this exact format:
 {
   "thoughts": "Your thoughts on the task at hand, was the previous goal successful?",
@@ -18,4 +11,4 @@ export const OUTPUT_FORMAT = `Your response MUST be in this exact format:
       }
     }
   ]
-}`;
+}`

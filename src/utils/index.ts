@@ -1,6 +1,5 @@
-import { ErrorEmitter } from "./error-emitter";
-import { parseMarkdown } from "./html-to-markdown";
-import { retry } from "./retry";
 import { sleep } from "./sleep";
+import { retry } from "./retry";
+import { ErrorEmitter } from "./error-emitter";
 
-export { sleep, retry, ErrorEmitter, parseMarkdown };
+export { sleep, retry, ErrorEmitter };

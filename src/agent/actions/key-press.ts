@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ActionContext, AgentActionDefinition } from "@/types";
 
 /**
- * Translates xdotool-like key strings to Playwright-compatible keys.
+ * Translates xdotool-like key strings to rebrowser-playwright-compatible keys.
  * Reference: https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key/Key_Values
  */
 function translateKey(key: string): string {
@@ -92,7 +92,7 @@ export const KeyPressAction = z
       `Press a key or key-combination on the keyboard.\n
 - This supports xdotool's \`key\` syntax.\n
 - Examples: "a", "Return", "alt+Tab", "ctrl+s", "Up", "KP_0" (for the numpad 0 key).
-`,
+`
     ),
   })
   .describe("Press a key or key-combination on the keyboard");
@@ -102,7 +102,6 @@ export type KeyPressActionType = z.infer<typeof KeyPressAction>;
 export const KeyPressActionDefinition: AgentActionDefinition = {
   type: "keyPress" as const,
   actionParams: KeyPressAction,
-
   run: async (ctx: ActionContext, action: KeyPressActionType) => {
     const { text } = action;
 
@@ -129,57 +128,6 @@ export const KeyPressActionDefinition: AgentActionDefinition = {
       message: `Pressed key "${text}"`,
     };
   },
-
-  generateCode: async (ctx: ActionContext, action: KeyPressActionType) => {
-    const { text } = action;
-
-    if (text.includes(" ") && !text.includes("+")) {
-      const keys = text.split(" ");
-      let code = "";
-      for (const k of keys) {
-        const translatedKey = translateKey(k);
-        code += `
-        await ctx.page.keyboard.press(${JSON.stringify(translatedKey)});
-        console.log(\`Pressed key: \${${JSON.stringify(translatedKey)}}\`);
-        \n`;
-      }
-      return code;
-    } else if (text.includes("+")) {
-      let code = "";
-
-      const keys = text.split("+");
-      for (let i = 0; i < keys.length - 1; i++) {
-        const translatedKey = translateKey(keys[i]);
-        code += `
-        await ctx.page.keyboard.down(${JSON.stringify(translatedKey)});
-        console.log(\`Pressed key down: \${${JSON.stringify(translatedKey)}}\`);
-        \n`;
-      }
-
-      const lastKey = translateKey(keys[keys.length - 1]);
-      code += `
-      await ctx.page.keyboard.press(${JSON.stringify(lastKey)});
-      console.log(\`Pressed key: \${${JSON.stringify(lastKey)}}\`);
-      \n`;
-
-      for (let i = keys.length - 2; i >= 0; i--) {
-        const translatedKey = translateKey(keys[i]);
-        code += `
-        await ctx.page.keyboard.up(${JSON.stringify(translatedKey)});
-        console.log(\`Pressed key up: \${${JSON.stringify(translatedKey)}}\`);
-        \n`;
-      }
-
-      return code;
-    } else {
-      const translatedKey = translateKey(text);
-      return `
-      await ctx.page.keyboard.press(${JSON.stringify(translatedKey)});
-      console.log(\`Pressed key: \${${JSON.stringify(translatedKey)}}\`);
-      \n`;
-    }
-  },
-
   pprintAction: function (params: KeyPressActionType): string {
     return `Press key "${params.text}"`;
   },

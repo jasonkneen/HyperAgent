@@ -1,5 +1,5 @@
-import { INPUT_FORMAT, INPUT_FORMAT_FIND_ELEMENT } from "./input-format";
-import { OUTPUT_FORMAT, OUTPUT_FORMAT_FIND_ELEMENT } from "./output-format";
+import { INPUT_FORMAT } from "./input-format";
+import { OUTPUT_FORMAT } from "./output-format";
 import { EXAMPLE_ACTIONS } from "./examples-actions";
 
 const DATE_STRING = new Date().toLocaleString(undefined, {
@@ -8,17 +8,6 @@ const DATE_STRING = new Date().toLocaleString(undefined, {
   day: "2-digit",
   weekday: "long",
 });
-
-export const SYSTEM_PROMPT_FIND_ELEMENT = `
-You are a smart and sophisticated agent that is designed to automate web browser interactions.
-You try to accomplish goals in a quick and concise manner.
-
-# Input Format
-${INPUT_FORMAT_FIND_ELEMENT}
-
-# Output Format
-${OUTPUT_FORMAT_FIND_ELEMENT}
-`;
 
 export const SYSTEM_PROMPT = `You are a smart and sophisticated agent that is designed to automate web browser interactions.
 You try to accomplish goals in a quick and concise manner.
@@ -53,55 +42,11 @@ ${EXAMPLE_ACTIONS}
 - The "complete" action must be the final action in your sequence
 - Before using "complete", verify you have gathered all requested information and met all task requirements
 - Include detailed results in the "complete" action's text parameter to show how you satisfied each requirement
-- The "complete" action should reference extracted variables using <<key>> format
-- Do NOT complete tasks with information you've only read from the DOM
-- All data used in completion must come from properly extracted variables
 
 2. Validation:
 - Before you finish up your task, call the taskCompleteValidation. It will double check your task and it's subtasks. That will be used to see if you're done with all tasks and subtasks of that at this point. You **MUST** run this before performing a tool call to the "complete" tool.
-- Before using any information from a page in subsequent actions, verify you have extracted it as a variable
-- You cannot use information you've merely "seen" in the DOM - it must be extracted
-- The complete action should reference extracted variables, not hardcoded values
-
-3. Variable Usage (CRITICAL):
-- ALWAYS use variable references when they are available in the Variables section
-- Variable references use the format: <<variableKey>>
-- Example: If Variables section shows <<top_country_1>> = "Greece", you MUST use <<top_country_1>> in your action parameters, NOT "Greece"
-- This applies to ALL places, including:
-  * Your thoughts: "I need to find the capital of <<top_country_1>>" NOT "I need to find the capital of Greece"
-  * Your memory: "Extracted <<top_country_1>> and <<top_country_2>>" NOT "Extracted Greece and Italy"
-  * Your nextGoal: "Search for capital of <<top_country_1>>" NOT "Search for capital of Greece"
-  * ALL action parameters, especially:
-    - inputText: Use "Capital of <<top_country_1>>" NOT "Capital of Greece"
-    - extract objectives: Use "Extract the capital of <<top_country_1>>" NOT "Extract the capital of Greece"
-    - Any text fields that reference data from the page
-- NEVER hardcode values that are available as variables in ANY part of your response
-
-4. Information Extraction (MANDATORY):
-- You MUST use the "extract" action to gather ANY information from a page that will be used in subsequent steps
-- Reading values directly from the DOM/Elements section is FORBIDDEN for task completion
-- Even if you can see the information in the Elements section, you MUST extract it properly
-- Example: If you need "top two countries", use extract action, don't just read from DOM
-- The complete action should reference extracted variables, not hardcoded values
-- CRITICAL: In extract actions:
-  * Objectives MUST use <<variableKey>> references:
-    - CORRECT: "Extract the capital of <<top_country_1>>"
-    - WRONG: "Extract the capital of France"
-  * Variables array should contain descriptive names:
-    - CORRECT: ["capital_of_top_country_1", "capital_of_top_country_2"]
-    - WRONG: ["capital_of_france", "paris"]
-  * The extracted keys will be used as variable references later
-  * Descriptions returned by extract MUST use variable references:
-    - CORRECT: "The capital of <<top_country_1>>"
-    - WRONG: "The capital of France"
 
 # Guidelines
-
-INFORMATION FLOW:
-- Extract data from pages → Store as variables → Use variables in subsequent actions
-- Example flow: Extract countries → Search for capitals using <<country_1>> → Extract capitals → Use in final search
-- NEVER skip the extraction step, even if you can see the information in the DOM
-
 1. NAVIGATION
 - If no suitable elements exist, use other functions to complete the task
 - Use scroll to find elements you are looking for

@@ -12,14 +12,12 @@ import {
   AgentOutputFn,
   AgentOutput,
   AgentStep,
-  VariableExtractionOutput,
   TaskParams,
   TaskOutput,
   Task,
   TaskStatus,
   TaskState,
   endTaskStatuses,
-  HyperVariable,
 } from "./agent/types";
 
 // Config Types
@@ -55,10 +53,6 @@ export {
   // Browser Provider Types
   BrowserProvider,
   endTaskStatuses,
-
-  // Helper Types
-  VariableExtractionOutput,
-  HyperVariable,
 };
 
 // Extend NodeJS.ProcessEnv to include our environment variables

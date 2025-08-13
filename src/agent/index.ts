@@ -1,10 +1,8 @@
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { ChatOpenAI } from "@langchain/openai";
-import { Browser, BrowserContext, Locator, Page } from "rebrowser-playwright";
+import { Browser, BrowserContext, Page } from "rebrowser-playwright";
 import { v4 as uuidv4 } from "uuid";
-import { z } from "zod";
 
-import { getDom } from "@/context-providers/dom";
 import {
   BrowserProviders,
   HyperAgentConfig,
@@ -12,7 +10,6 @@ import {
   MCPServerConfig,
 } from "@/types/config";
 import {
-  ActionContext,
   ActionType,
   AgentActionDefinition,
   endTaskStatuses,
@@ -32,24 +29,16 @@ import {
   LocalBrowserProvider,
 } from "../browser-providers";
 import { HyperagentError } from "./error";
-import { SYSTEM_PROMPT_FIND_ELEMENT } from "./messages/system-prompt";
 import { MCPClient } from "./mcp/client";
-import { compositeScreenshot, runAgentTask } from "./tools/agent";
+import { runAgentTask } from "./tools/agent";
 import { HyperPage, HyperVariable } from "@/types/agent/types";
-import { buildAgentStepMessages } from "./messages/builder";
+import { z } from "zod";
 import { ErrorEmitter } from "@/utils";
-import { retry } from "@/utils/retry";
-import { sleep } from "@/utils/sleep";
-import { getLocator } from "./actions/utils";
-
-const ResponseSchema = z.object({
-  index: z.number().describe("The index number of the element"),
-});
 
 export class HyperAgent<T extends BrowserProviders = "Local"> {
-  public llm: BaseChatModel;
+  private llm: BaseChatModel;
   private tasks: Record<string, TaskState> = {};
-  private tokenLimit = 128000; // Default token limit
+  private tokenLimit = 128000;
   private debug = false;
   private mcpClient: MCPClient | undefined;
   private browserProvider: T extends "Hyperbrowser"
@@ -57,9 +46,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     : LocalBrowserProvider;
   private browserProviderType: T;
   private actions: Array<AgentActionDefinition> = [...DEFAULT_ACTIONS];
-  private generateScript = false;
-  private scriptPath?: string;
-  private config: HyperAgentConfig<T>;
 
   public browser: Browser | null = null;
   public context: BrowserContext | null = null;
@@ -79,7 +65,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
   }
 
   constructor(params: HyperAgentConfig<T> = {}) {
-    this.config = params;
     if (!params.llm) {
       if (process.env.OPENAI_API_KEY) {
         this.llm = new ChatOpenAI({
@@ -109,15 +94,12 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     }
 
     this.debug = params.debug ?? false;
-    this.generateScript = params.generateScript ?? false;
-    this.scriptPath = params.scriptPath;
-    this.tokenLimit = params.tokenLimit ?? this.tokenLimit;
     this.errorEmitter = new ErrorEmitter();
   }
 
   /**
    *  This is just exposed as a utility function. You don't need to call it explicitly.
-   * @returns A reference to the current Playwright browser instance.
+   * @returns A reference to the current rebrowser-playwright browser instance.
    */
   public async initBrowser(): Promise<Browser> {
     if (!this.browser) {
@@ -341,25 +323,14 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       steps: [],
     };
     this.tasks[taskId] = taskState;
-
-    const debugDir = params?.debugDir || `debug/${taskId}`;
-    const scriptFile = this.generateScript
-      ? this.scriptPath
-        ? this.scriptPath
-        : `${debugDir}/script.ts`
-      : undefined;
     runAgentTask(
       {
         llm: this.llm,
         actions: this.getActions(params?.outputSchema),
         tokenLimit: this.tokenLimit,
         debug: this.debug,
-        generateScript: this.generateScript,
-        scriptFile: scriptFile,
-        debugDir: debugDir,
         mcpClient: this.mcpClient,
         variables: this._variables,
-        agentConfig: this.config,
       },
       taskState,
       params
@@ -401,13 +372,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       steps: [],
     };
     this.tasks[taskId] = taskState;
-
-    const debugDir = params?.debugDir || `debug/${taskId}`;
-    const scriptFile = this.generateScript
-      ? this.scriptPath
-        ? this.scriptPath
-        : `${debugDir}/script.ts`
-      : undefined;
     try {
       return await runAgentTask(
         {
@@ -415,12 +379,8 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
           actions: this.getActions(params?.outputSchema),
           tokenLimit: this.tokenLimit,
           debug: this.debug,
-          generateScript: this.generateScript,
-          scriptFile: scriptFile,
-          debugDir: debugDir,
           mcpClient: this.mcpClient,
           variables: this._variables,
-          agentConfig: this.config,
         },
         taskState,
         params
@@ -429,103 +389,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       taskState.status = TaskStatus.FAILED;
       throw error;
     }
-  }
-
-  public async getLocator(
-    querySelector: string,
-    fallbackDescription: string,
-    page: Page
-  ): Promise<Locator> {
-    const locator = page.locator(querySelector);
-
-    let count = await locator.count();
-    if (count > 0) {
-      return locator;
-    }
-
-    const fallbackLocator = await this.findElement(fallbackDescription, page);
-    if (fallbackLocator) {
-      count = await fallbackLocator.count();
-      if (count > 0) {
-        return fallbackLocator;
-      }
-    }
-
-    throw new HyperagentError(
-      `Element not found for description: ${fallbackDescription}`
-    );
-  }
-
-  private async findElement(
-    taskDescription: string,
-    page: Page
-  ): Promise<Locator | null> {
-    // Get the DOM state
-    let domState;
-    while (!domState) {
-      domState = await retry({ func: () => getDom(page) });
-      if (!domState) {
-        console.log("No DOM state, waiting 1 second.");
-        await sleep(1000);
-      }
-    }
-
-    // Get the screenshot ready with indexes
-    const trimmedScreenshot = await compositeScreenshot(
-      page,
-      domState.screenshot.startsWith("data:image/png;base64,")
-        ? domState.screenshot.slice("data:image/png;base64,".length)
-        : domState.screenshot
-    );
-
-    // Build Agent Step Messages
-    const baseMsgs = [{ role: "system", content: SYSTEM_PROMPT_FIND_ELEMENT }];
-    const msgs = await buildAgentStepMessages(
-      baseMsgs,
-      [],
-      taskDescription,
-      page,
-      domState,
-      trimmedScreenshot as string,
-      []
-    );
-
-    // Invoke LLM
-    const llmStructured = this.llm.withStructuredOutput(ResponseSchema);
-    const agentOutput = await retry({
-      func: () => llmStructured.invoke(msgs),
-    });
-
-    // Check if agentOutput is null/undefined or doesn't have the expected structure
-    if (!agentOutput || typeof agentOutput.index !== "number") {
-      console.warn(
-        "LLM failed to return valid structured output for element finding"
-      );
-    }
-
-    // Check if agentOutput is null/undefined or doesn't have the expected structure
-    if (!agentOutput || typeof agentOutput.index !== "number") {
-      console.warn(
-        "LLM failed to return valid structured output for element finding"
-      );
-      return null;
-    }
-
-    // Return the element locator
-    const actionCtx: ActionContext = {
-      domState,
-      page,
-      tokenLimit: this.tokenLimit,
-      llm: this.llm,
-      debugDir: undefined,
-      mcpClient: undefined,
-      variables: {},
-    };
-    const locator = getLocator(actionCtx, agentOutput.index);
-    if (!locator) {
-      return null;
-    }
-    return locator;
   }
 
   /**
@@ -729,10 +592,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
         return JSON.parse(res.output as string);
       }
     };
-    hyperPage.getLocator = (
-      querySelector: string,
-      fallbackDescription: string
-    ) => this.getLocator(querySelector, fallbackDescription, page);
     return hyperPage;
   }
 }

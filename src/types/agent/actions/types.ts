@@ -10,7 +10,7 @@ export interface ActionContext {
   domState: DOMState;
   llm: BaseChatModel;
   tokenLimit: number;
-  variables: Record<string, HyperVariable>;
+  variables: HyperVariable[];
   debugDir?: string;
   mcpClient?: MCPClient;
 }
@@ -19,7 +19,6 @@ export interface ActionOutput {
   success: boolean;
   message: string;
   extract?: object;
-  variableUpdates?: HyperVariable[];
 }
 
 export type ActionSchemaType = z.ZodObject<
@@ -50,20 +49,10 @@ export interface AgentActionDefinition<
   actionParams: T;
 
   run(ctx: ActionContext, params: z.infer<T>): Promise<ActionOutput>;
-  generateCode?(
-    ctx: ActionContext,
-    params: z.infer<T>,
-    prefix: string,
-    expectedVariables?: HyperVariable[]
-  ): Promise<string>;
   /**
    * completeAction is only called if the name of this action is "complete". It is meant to format text into a proper format for output.
    * @param params
-   * @param variables Optional variables to replace in the text
    */
-  completeAction?(
-    params: z.infer<T>,
-    variables?: Record<string, any>
-  ): Promise<string>;
+  completeAction?(params: z.infer<T>): Promise<string>;
   pprintAction?(params: z.infer<T>): string;
 }

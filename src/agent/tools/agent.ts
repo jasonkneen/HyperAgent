@@ -1,6 +1,5 @@
 import { AgentStep } from "@/types/agent/types";
 import fs from "fs";
-import path from "path";
 
 import {
   ActionContext,
@@ -9,18 +8,16 @@ import {
   AgentActionDefinition,
 } from "@/types";
 import { getDom } from "@/context-providers/dom";
-import { initActionScript, wrapUpActionScript } from "@/utils/action";
 import { retry } from "@/utils/retry";
 import { sleep } from "@/utils/sleep";
 
+import { AgentOutputFn, endTaskStatuses } from "@hyperbrowser/agent/types";
 import {
-  AgentOutputFn,
-  endTaskStatuses,
   TaskParams,
   TaskOutput,
   TaskState,
   TaskStatus,
-} from "@/types";
+} from "@hyperbrowser/agent/types";
 
 import { HyperagentError } from "../error";
 import { buildAgentStepMessages } from "../messages/builder";
@@ -33,7 +30,7 @@ import { ActionNotFoundError } from "../actions";
 import { AgentCtx } from "./types";
 import { Jimp } from "jimp";
 
-export const compositeScreenshot = async (page: Page, overlay: string) => {
+const compositeScreenshot = async (page: Page, overlay: string) => {
   const screenshot = await page.screenshot({ type: "png" });
   const [baseImage, overlayImage] = await Promise.all([
     Jimp.read(screenshot as Buffer),
@@ -44,7 +41,7 @@ export const compositeScreenshot = async (page: Page, overlay: string) => {
   return buffer.toString("base64");
 };
 
-export const getActionSchema = (actions: Array<AgentActionDefinition>) => {
+const getActionSchema = (actions: Array<AgentActionDefinition>) => {
   const zodDefs = actions.map((action) =>
     z.object({
       type: z.nativeEnum([action.type] as unknown as z.EnumLike),
@@ -71,29 +68,11 @@ const getActionHandler = (
   }
 };
 
-const getActionCodeGenerator = (
-  actions: Array<AgentActionDefinition>,
-  type: string
-) => {
-  const foundAction = actions.find((action) => action.type === type);
-  if (foundAction) {
-    return (
-      foundAction.generateCode ||
-      (async () =>
-        `// Skipped. Action ${type} invoked, but skipped code logging.`)
-    );
-  } else {
-    throw new ActionNotFoundError(type);
-  }
-};
-
-const runAction = async <T extends "Local" | "Hyperbrowser">(
+const runAction = async (
   action: ActionType,
   domState: DOMState,
   page: Page,
-  ctx: AgentCtx<T>,
-  step: number,
-  substep: number
+  ctx: AgentCtx
 ): Promise<ActionOutput> => {
   const actionCtx: ActionContext = {
     domState,
@@ -102,7 +81,7 @@ const runAction = async <T extends "Local" | "Hyperbrowser">(
     llm: ctx.llm,
     debugDir: ctx.debugDir,
     mcpClient: ctx.mcpClient || undefined,
-    variables: ctx.variables,
+    variables: Object.values(ctx.variables),
   };
   const actionType = action.type;
   const actionHandler = getActionHandler(ctx.actions, action.type);
@@ -112,37 +91,8 @@ const runAction = async <T extends "Local" | "Hyperbrowser">(
       message: `Unknown action type: ${actionType}`,
     };
   }
-
   try {
-    const actionOutput = await actionHandler(actionCtx, action.params);
-
-    // Check if the action output contains variable updates
-    if (
-      actionOutput.variableUpdates &&
-      actionOutput.variableUpdates.length > 0
-    ) {
-      // Update ctx.variables with the new values
-      for (const update of actionOutput.variableUpdates) {
-        ctx.variables[update.key] = {
-          key: update.key,
-          value: update.value,
-          description:
-            update.description || ctx.variables[update.key]?.description || "",
-        };
-      }
-    }
-
-    if (ctx.generateScript) {
-      await updateActionScript(
-        action,
-        ctx,
-        actionCtx,
-        actionOutput,
-        step,
-        substep
-      );
-    }
-    return actionOutput;
+    return await actionHandler(actionCtx, action.params);
   } catch (error) {
     return {
       success: false,
@@ -151,84 +101,41 @@ const runAction = async <T extends "Local" | "Hyperbrowser">(
   }
 };
 
-const updateActionScript = async (
-  action: ActionType,
-  ctx: AgentCtx<"Local" | "Hyperbrowser">,
-  actionCtx: ActionContext,
-  actionOutput: ActionOutput,
-  step: number,
-  substep: number
-) => {
-  if (actionOutput.success && ctx.scriptFile) {
-    const scriptFile = ctx.scriptFile;
-
-    const actionParamsStr = JSON.stringify(action.params, null, 2);
-    const generateCodeFn = getActionCodeGenerator(ctx.actions, action.type);
-
-    const code = await generateCodeFn(
-      actionCtx,
-      action.params,
-      `step_${step}_${substep}_`,
-      actionOutput.variableUpdates
-    );
-
-    fs.appendFileSync(
-      scriptFile,
-      `
-      /*
-      action: ${action.type}
-      actionParams = ${actionParamsStr}
-      */
-
-      ${code}
-      await sleep(4000);
-      `
-    );
-  }
-};
-
 export const runAgentTask = async (
-  ctx: AgentCtx<"Local" | "Hyperbrowser">,
+  ctx: AgentCtx,
   taskState: TaskState,
   params?: TaskParams
 ): Promise<TaskOutput> => {
-  if (!taskState) {
-    throw new HyperagentError(`Task not found`);
-  }
   const taskId = taskState.id;
-
-  if (ctx.scriptFile) {
-    const scriptDir = path.dirname(ctx.scriptFile);
-    fs.mkdirSync(scriptDir, { recursive: true });
-    initActionScript(ctx.scriptFile, taskState.task, ctx.agentConfig);
+  const debugDir = params?.debugDir || `debug/${taskId}`;
+  if (ctx.debug) {
+    console.log(`Debugging task ${taskId} in ${debugDir}`);
+  }
+  if (!taskState) {
+    throw new HyperagentError(`Task ${taskId} not found`);
   }
 
-  if (ctx.debug && ctx.debugDir) {
-    console.log(`Debugging task ${taskId} in ${ctx.debugDir}`);
-    fs.mkdirSync(ctx.debugDir, { recursive: true });
-  }
-
+  taskState.status = TaskStatus.RUNNING as TaskStatus;
   if (!ctx.llm) {
     throw new HyperagentError("LLM not initialized");
   }
   const llmStructured = ctx.llm.withStructuredOutput(
     AgentOutputFn(getActionSchema(ctx.actions)),
-    { method: getStructuredOutputMethod(ctx.llm) }
+    {
+      method: getStructuredOutputMethod(ctx.llm),
+    }
   );
   const baseMsgs = [{ role: "system", content: SYSTEM_PROMPT }];
 
-  taskState.status = TaskStatus.RUNNING as TaskStatus;
   let output = "";
   const page = taskState.startingPage;
   let currStep = 0;
-
   while (true) {
     // Status Checks
     if ((taskState.status as TaskStatus) == TaskStatus.PAUSED) {
       await sleep(100);
       continue;
     }
-
     if (endTaskStatuses.has(taskState.status)) {
       break;
     }
@@ -236,8 +143,7 @@ export const runAgentTask = async (
       taskState.status = TaskStatus.CANCELLED;
       break;
     }
-
-    const debugStepDir = `${ctx.debugDir}/step-${currStep}`;
+    const debugStepDir = `${debugDir}/step-${currStep}`;
     if (ctx.debug) {
       fs.mkdirSync(debugStepDir, { recursive: true });
     }
@@ -259,6 +165,7 @@ export const runAgentTask = async (
 
     // Store Dom State for Debugging
     if (ctx.debug) {
+      fs.mkdirSync(debugDir, { recursive: true });
       fs.writeFileSync(`${debugStepDir}/elems.txt`, domState.domState);
       if (trimmedScreenshot) {
         fs.writeFileSync(
@@ -306,7 +213,6 @@ export const runAgentTask = async (
     // Run Actions
     const agentStepActions = agentOutput.actions;
     const actionOutputs: ActionOutput[] = [];
-    let substep = 0;
     for (const action of agentStepActions) {
       if (action.type === "complete") {
         taskState.status = TaskStatus.COMPLETED;
@@ -315,10 +221,8 @@ export const runAgentTask = async (
         );
         if (actionDefinition) {
           output =
-            (await actionDefinition.completeAction?.(
-              action.params,
-              ctx.variables
-            )) ?? "No complete action found";
+            (await actionDefinition.completeAction?.(action.params)) ??
+            "No complete action found";
         } else {
           output = "No complete action found";
         }
@@ -327,12 +231,9 @@ export const runAgentTask = async (
         action as ActionType,
         domState,
         page,
-        ctx,
-        currStep,
-        substep
+        ctx
       );
       actionOutputs.push(actionOutput);
-      substep = substep + 1;
       await sleep(2000); // TODO: look at this - smarter page loading
     }
     const step: AgentStep = {
@@ -344,9 +245,9 @@ export const runAgentTask = async (
     await params?.onStep?.(step);
     currStep = currStep + 1;
 
-    if (ctx.debug && ctx.debugDir) {
+    if (ctx.debug) {
       fs.writeFileSync(
-        `${ctx.debugDir}/stepOutput.json`,
+        `${debugStepDir}/stepOutput.json`,
         JSON.stringify(step, null, 2)
       );
     }
@@ -357,18 +258,12 @@ export const runAgentTask = async (
     steps: taskState.steps,
     output,
   };
-
-  if (ctx.debug && ctx.debugDir) {
+  if (ctx.debug) {
     fs.writeFileSync(
-      `${ctx.debugDir}/taskOutput.json`,
+      `${debugDir}/taskOutput.json`,
       JSON.stringify(taskOutput, null, 2)
     );
   }
-  // Finish script.ts & format it
-  if (ctx.scriptFile) {
-    wrapUpActionScript(ctx.scriptFile);
-  }
   await params?.onComplete?.(taskOutput);
-
   return taskOutput;
 };

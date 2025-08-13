@@ -1,9 +1,5 @@
 import { GoToURLActionDefinition } from "./go-to-url";
-import {
-  ClickElementActionDefinition,
-  waitForElementToBeEnabled,
-  waitForElementToBeStable,
-} from "./click-element";
+import { ClickElementActionDefinition } from "./click-element";
 import { InputTextActionDefinition } from "./input-text";
 import { CompleteActionDefinition } from "./complete";
 import { generateCompleteActionWithOutputDefinition } from "./complete-with-output-schema";
@@ -55,6 +51,4 @@ export {
   DEFAULT_ACTIONS,
   CompleteActionDefinition,
   generateCompleteActionWithOutputDefinition,
-  waitForElementToBeEnabled,
-  waitForElementToBeStable,
 };

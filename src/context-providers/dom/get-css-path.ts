@@ -31,7 +31,7 @@ const getUniqueSegment = (element: HTMLElement): string => {
   if (classes && parent) {
     const classSelector = `${tagName}.${classes}`;
     const siblingsWithSameClasses = Array.from(
-      parent.querySelectorAll(`:scope > ${classSelector}`),
+      parent.querySelectorAll(`:scope > ${classSelector}`)
     );
     if (
       siblingsWithSameClasses.length === 1 &&
@@ -108,10 +108,10 @@ const getRelativeCSSPath = (element: HTMLElement, boundary: Node): string => {
 
 /**
  * Generates a full CSS selector path for a given element, handling shadow DOM boundaries.
- * Uses Playwright's '>>' syntax to denote shadow DOM transitions.
+ * Uses rebrowser-playwright's '>>' syntax to denote shadow DOM transitions.
  *
  * @param element The target HTMLElement.
- * @returns A CSS selector string that can be used with Playwright locators.
+ * @returns A CSS selector string that can be used with rebrowser-playwright locators.
  */
 export const getCSSPath = (element: HTMLElement | null): string => {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) {
@@ -144,16 +144,16 @@ export const getCSSPath = (element: HTMLElement | null): string => {
     if (!relativePath) {
       console.warn(
         "Could not determine relative CSS path within ShadowRoot for:",
-        element,
+        element
       );
       // Element might be the direct child/root of the shadow DOM, or path generation failed.
-      // Playwright needs a selector after >>, maybe ':host' or '*' or just return hostPath?
+      // rebrowser-playwright needs a selector after >>, maybe ':host' or '*' or just return hostPath?
       // Returning just hostPath might select the host instead of the shadow content.
       // Let's assume relativePath should usually exist. If not, path is likely invalid.
       return "";
     }
 
-    // Playwright syntax for piercing shadow DOM
+    // rebrowser-playwright syntax for piercing shadow DOM
     return `${hostPath} >> ${relativePath}`;
   } else if (root instanceof Document) {
     // Element is in the main document or an iframe document
@@ -163,7 +163,7 @@ export const getCSSPath = (element: HTMLElement | null): string => {
       "Element root is neither Document nor ShadowRoot:",
       root,
       "for element:",
-      element,
+      element
     );
     // Fallback: Try to compute path relative to its own root node anyway
     return getRelativeCSSPath(element, root);
