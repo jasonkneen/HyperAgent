@@ -3,7 +3,9 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const agent = new HyperAgent();
+const agent = new HyperAgent({
+  debug: true,
+});
 
 (async () => {
   const page = await agent.newPage();

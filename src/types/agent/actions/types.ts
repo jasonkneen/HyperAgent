@@ -1,4 +1,4 @@
-import { Page } from "playwright";
+import { Page } from "rebrowser-playwright";
 import { DOMState } from "../../../context-providers/dom/types";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { z } from "zod";
@@ -54,7 +54,7 @@ export interface AgentActionDefinition<
     ctx: ActionContext,
     params: z.infer<T>,
     prefix: string,
-    expectedVariables?: HyperVariable[],
+    expectedVariables?: HyperVariable[]
   ): Promise<string>;
   /**
    * completeAction is only called if the name of this action is "complete". It is meant to format text into a proper format for output.
@@ -63,7 +63,7 @@ export interface AgentActionDefinition<
    */
   completeAction?(
     params: z.infer<T>,
-    variables?: Record<string, any>,
+    variables?: Record<string, any>
   ): Promise<string>;
   pprintAction?(params: z.infer<T>): string;
 }

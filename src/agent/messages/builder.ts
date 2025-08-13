@@ -1,6 +1,6 @@
 import { AgentStep } from "@/types";
 import { BaseMessageLike } from "@langchain/core/messages";
-import { Page } from "playwright";
+import { Page } from "rebrowser-playwright";
 import { getScrollInfo } from "./utils";
 import { retry } from "@/utils/retry";
 import { DOMState } from "@/context-providers/dom/types";
@@ -13,7 +13,7 @@ export const buildAgentStepMessages = async (
   page: Page,
   domState: DOMState,
   screenshot: string,
-  variables: HyperVariable[],
+  variables: HyperVariable[]
 ): Promise<BaseMessageLike[]> => {
   const messages = [...baseMessages];
 

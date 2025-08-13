@@ -1,4 +1,4 @@
-import { Browser } from "playwright";
+import { Browser } from "rebrowser-playwright";
 
 abstract class BrowserProvider<T> {
   abstract session: unknown;
