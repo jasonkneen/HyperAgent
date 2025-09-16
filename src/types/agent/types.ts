@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ActionOutput } from "./actions/types";
-import { Page } from "rebrowser-playwright";
+import { Page } from "patchright";
 import { ErrorEmitter } from "@/utils";
 
 export const AgentOutputFn = (

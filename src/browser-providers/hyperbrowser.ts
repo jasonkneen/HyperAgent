@@ -1,4 +1,4 @@
-import { chromium, Browser, ConnectOverCDPOptions } from "rebrowser-playwright";
+import { chromium, Browser, ConnectOverCDPOptions } from "patchright";
 import { Hyperbrowser } from "@hyperbrowser/sdk";
 import {
   CreateSessionParams,

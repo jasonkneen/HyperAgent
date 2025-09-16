@@ -1,4 +1,4 @@
-import { Page } from "rebrowser-playwright";
+import { Page } from "patchright";
 
 export const getScrollInfo = async (page: Page): Promise<[number, number]> => {
   const scrollY = (await page.evaluate("window.scrollY")) as number;

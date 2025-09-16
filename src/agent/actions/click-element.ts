@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Locator } from "rebrowser-playwright";
+import { Locator } from "patchright";
 import { ActionContext, ActionOutput, AgentActionDefinition } from "@/types";
 import { sleep } from "@/utils";
 import { getLocator } from "./utils";
