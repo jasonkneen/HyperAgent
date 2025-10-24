@@ -33,17 +33,19 @@ export const ClickElementActionDefinition: AgentActionDefinition = {
       return { success: false, message: "Element not found on page" };
     }
 
+    const timeout = ctx.actionConfig?.clickElement?.timeout ?? CLICK_CHECK_TIMEOUT_PERIOD;
+
     await locator.scrollIntoViewIfNeeded({
-      timeout: CLICK_CHECK_TIMEOUT_PERIOD,
+      timeout,
     });
 
     await Promise.all([
       locator.waitFor({
         state: "visible",
-        timeout: CLICK_CHECK_TIMEOUT_PERIOD,
+        timeout,
       }),
-      waitForElementToBeEnabled(locator, CLICK_CHECK_TIMEOUT_PERIOD),
-      waitForElementToBeStable(locator, CLICK_CHECK_TIMEOUT_PERIOD),
+      waitForElementToBeEnabled(locator, timeout),
+      waitForElementToBeStable(locator, timeout),
     ]);
 
     await locator.click({ force: true });

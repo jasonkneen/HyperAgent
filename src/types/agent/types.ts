@@ -92,6 +92,7 @@ export interface HyperPage extends Page {
   aiAsync: (task: string, params?: TaskParams) => Promise<Task>;
   extract<T extends z.AnyZodObject | undefined = undefined>(
     task?: string,
-    outputSchema?: T
+    outputSchema?: T,
+    params?: Omit<TaskParams, "outputSchema">
   ): Promise<T extends z.AnyZodObject ? z.infer<T> : string>;
 }

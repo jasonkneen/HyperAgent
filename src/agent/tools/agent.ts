@@ -82,6 +82,7 @@ const runAction = async (
     debugDir: ctx.debugDir,
     mcpClient: ctx.mcpClient || undefined,
     variables: Object.values(ctx.variables),
+    actionConfig: ctx.actionConfig,
   };
   const actionType = action.type;
   const actionHandler = getActionHandler(ctx.actions, action.type);

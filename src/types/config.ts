@@ -56,6 +56,20 @@ export interface MCPConfig {
 
 export type BrowserProviders = "Local" | "Hyperbrowser";
 
+export interface ActionConfig {
+  /**
+   * Configuration for the clickElement action
+   */
+  clickElement?: {
+    /**
+     * Timeout in milliseconds for click operations
+     * This controls how long to wait for elements to be visible, enabled, and stable before clicking
+     * @default 2500
+     */
+    timeout?: number;
+  };
+}
+
 export interface HyperAgentConfig<T extends BrowserProviders = "Local"> {
   customActions?: Array<AgentActionDefinition>;
 
@@ -69,4 +83,9 @@ export interface HyperAgentConfig<T extends BrowserProviders = "Local"> {
     "debug"
   >;
   localConfig?: ConstructorParameters<typeof LocalBrowserProvider>[0];
+
+  /**
+   * Configuration for agent actions
+   */
+  actionConfig?: ActionConfig;
 }

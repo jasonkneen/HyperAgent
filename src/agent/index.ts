@@ -45,6 +45,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     : LocalBrowserProvider;
   private browserProviderType: T;
   private actions: Array<AgentActionDefinition> = [...DEFAULT_ACTIONS];
+  private actionConfig: HyperAgentConfig["actionConfig"];
 
   public browser: Browser | null = null;
   public context: BrowserContext | null = null;
@@ -97,6 +98,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     }
 
     this.debug = params.debug ?? false;
+    this.actionConfig = params.actionConfig;
     this.errorEmitter = new ErrorEmitter();
   }
 
@@ -334,6 +336,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
         debug: this.debug,
         mcpClient: this.mcpClient,
         variables: this._variables,
+        actionConfig: this.actionConfig,
       },
       taskState,
       params
@@ -384,6 +387,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
           debug: this.debug,
           mcpClient: this.mcpClient,
           variables: this._variables,
+          actionConfig: this.actionConfig,
         },
         taskState,
         params
@@ -566,20 +570,22 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       this.executeTask(task, params, page);
     hyperPage.aiAsync = (task: string, params?: TaskParams) =>
       this.executeTaskAsync(task, params, page);
-    hyperPage.extract = async (task, outputSchema) => {
+    hyperPage.extract = async (task, outputSchema, params) => {
       if (!task && !outputSchema) {
         throw new HyperagentError(
           "No task description or output schema specified",
           400
         );
       }
+      const taskParams: TaskParams = {
+        maxSteps: params?.maxSteps ?? 2,
+        ...params,
+        outputSchema,
+      };
       if (task) {
         const res = await this.executeTask(
           `You have to perform an extraction on the current page. You have to perform the extraction according to the task: ${task}. Make sure your final response only contains the extracted content`,
-          {
-            maxSteps: 2,
-            outputSchema,
-          },
+          taskParams,
           page
         );
         if (outputSchema) {
@@ -589,7 +595,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       } else {
         const res = await this.executeTask(
           "You have to perform a data extraction on the current page. Make sure your final response only contains the extracted content",
-          { maxSteps: 2, outputSchema },
+          taskParams,
           page
         );
         return JSON.parse(res.output as string);
