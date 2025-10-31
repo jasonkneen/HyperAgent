@@ -12,7 +12,7 @@ export const buildAgentStepMessages = async (
   task: string,
   page: Page,
   domState: DOMState,
-  screenshot: string,
+  screenshot: string | undefined,
   variables: HyperVariable[]
 ): Promise<HyperAgentMessage[]> => {
   const messages = [...baseMessages];
@@ -63,7 +63,7 @@ export const buildAgentStepMessages = async (
     content: `=== Elements ===\n${domState.domState}\n`,
   });
 
-  // Add page screenshot section
+  // Add page screenshot section (always present in visual mode)
   const scrollInfo = await retry({ func: () => getScrollInfo(page) });
   messages.push({
     role: "user",

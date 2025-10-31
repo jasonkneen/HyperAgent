@@ -10,6 +10,7 @@ import {
 import { getDom } from "@/context-providers/dom";
 import { retry } from "@/utils/retry";
 import { sleep } from "@/utils/sleep";
+import { waitForSettledDOM } from "@/utils/waitForSettledDOM";
 
 import { AgentOutputFn, endTaskStatuses } from "@hyperbrowser/agent/types";
 import {
@@ -44,7 +45,7 @@ const compositeScreenshot = async (page: Page, overlay: string) => {
 const getActionSchema = (actions: Array<AgentActionDefinition>) => {
   const zodDefs = actions.map((action) =>
     z.object({
-      type: z.nativeEnum([action.type] as unknown as z.EnumLike),
+      type: z.literal(action.type),
       params: action.actionParams,
       actionDescription: z
         .string()
@@ -53,7 +54,7 @@ const getActionSchema = (actions: Array<AgentActionDefinition>) => {
         ),
     })
   );
-  return z.union([zodDefs[0], zodDefs[1], ...zodDefs.splice(2)]);
+  return z.union([zodDefs[0], zodDefs[1], ...zodDefs.splice(2)] as any);
 };
 
 const getActionHandler = (
@@ -122,8 +123,12 @@ export const runAgentTask = async (
   }
   // Use the new structured output interface
   const actionSchema = getActionSchema(ctx.actions);
+
+  // V1 always uses visual mode with full system prompt
+  const systemPrompt = SYSTEM_PROMPT;
+
   const baseMsgs: HyperAgentMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
   ];
 
   let output = "";
@@ -147,7 +152,7 @@ export const runAgentTask = async (
       fs.mkdirSync(debugStepDir, { recursive: true });
     }
 
-    // Get DOM State
+    // Get DOM State (V1 always uses visual mode)
     let domState: DOMState | null = null;
     try {
       domState = await retry({
@@ -178,12 +183,16 @@ export const runAgentTask = async (
       break;
     }
 
-    const trimmedScreenshot = await compositeScreenshot(
-      page,
-      domState.screenshot.startsWith("data:image/png;base64,")
-        ? domState.screenshot.slice("data:image/png;base64,".length)
-        : domState.screenshot
-    );
+    // V1 always uses visual mode with composite screenshot
+    let trimmedScreenshot: string | undefined;
+    if (domState.screenshot) {
+      trimmedScreenshot = await compositeScreenshot(
+        page,
+        domState.screenshot.startsWith("data:image/png;base64,")
+          ? domState.screenshot.slice("data:image/png;base64,".length)
+          : domState.screenshot
+      );
+    }
 
     // Store Dom State for Debugging
     if (ctx.debug) {
@@ -204,7 +213,7 @@ export const runAgentTask = async (
       taskState.task,
       page,
       domState,
-      trimmedScreenshot as string,
+      trimmedScreenshot,
       Object.values(ctx.variables)
     );
 
@@ -271,7 +280,8 @@ export const runAgentTask = async (
         ctx
       );
       actionOutputs.push(actionOutput);
-      await sleep(2000); // TODO: look at this - smarter page loading
+      // Wait for DOM to settle after action
+      await waitForSettledDOM(page);
     }
     const step: AgentStep = {
       idx: currStep,

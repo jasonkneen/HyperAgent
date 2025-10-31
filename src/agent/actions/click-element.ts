@@ -23,6 +23,7 @@ export const ClickElementActionDefinition: AgentActionDefinition = {
     action: ClickElementActionType
   ): Promise<ActionOutput> {
     const { index } = action;
+
     const locator = getLocator(ctx, index);
     if (!locator) {
       return { success: false, message: "Element not found" };
