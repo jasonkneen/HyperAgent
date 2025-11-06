@@ -2,6 +2,8 @@
  * Types for accessibility tree extraction using Chrome DevTools Protocol
  */
 
+import { Frame } from "playwright-core";
+
 /**
  * Raw AX Node from CDP Accessibility.getFullAXTree
  * Matches Chrome DevTools Protocol format
@@ -63,15 +65,37 @@ export interface DOMNode {
   contentDocument?: DOMNode;
   nodeType: number;
   frameId?: string;
+  /**
+   * Attributes of the Element node in the form of flat array [name1, value1, name2, value2]
+   */
+  attributes?: string[];
 }
 
 /**
- * Maps for backend node IDs to tag names and xpaths
+ * Iframe metadata for frame resolution
+ */
+export interface IframeInfo {
+  frameIndex: number;
+  src?: string;
+  name?: string;
+  xpath: string;
+  cdpFrameId?: string;  // CDP frameId (not unique, kept for debugging)
+  parentFrameIndex: number;  // Parent frame index (0 for main frame's children)
+  siblingPosition: number;  // Position among siblings with same (parent, URL)
+  iframeBackendNodeId?: number;  // backendNodeId of the <iframe> element (for debugging)
+  contentDocumentBackendNodeId?: number;  // backendNodeId of the iframe's content document root (for getPartialAXTree)
+  playwrightFrame?: Frame;  // Playwright Frame object (for OOPIF frame resolution)
+}
+
+/**
+ * Maps for backend node IDs to tag names, xpaths, and accessible names
  * Built from the full DOM tree
  */
 export interface BackendIdMaps {
-  tagNameMap: Record<number, string>;
-  xpathMap: Record<number, string>;
+  tagNameMap: Record<EncodedId, string>;
+  xpathMap: Record<EncodedId, string>;
+  accessibleNameMap: Record<EncodedId, string>;  // Maps encodedId to accessible names from aria-label/title/placeholder
+  frameMap?: Map<number, IframeInfo>;  // Maps frameIndex to iframe metadata
 }
 
 /**
@@ -129,6 +153,33 @@ export interface A11yDOMConfig {
 }
 
 /**
+ * Frame metadata for multi-frame support
+ */
+export interface FrameMetadata {
+  frameIndex: number;
+  frameUrl: string;
+  frameName: string;
+}
+
+/**
+ * Debug information about frame extraction
+ */
+export interface FrameDebugInfo {
+  frameIndex: number;
+  frameUrl: string;
+  totalNodes: number;
+  treeElementCount: number;
+  interactiveCount: number;
+  sampleNodes?: Array<{
+    role?: string;
+    name?: string;
+    nodeId?: string;
+    ignored?: boolean;
+    childIds?: number;
+  }>;
+}
+
+/**
  * Accessibility DOM State returned to agent
  */
 export interface A11yDOMState {
@@ -151,6 +202,21 @@ export interface A11yDOMState {
    * Optional screenshot (only in hybrid/visual-debug modes)
    */
   screenshot?: string;
+
+  /**
+   * Metadata about frames (for iframe support)
+   */
+  frameMetadata?: FrameMetadata[];
+
+  /**
+   * Map of frame indices to iframe metadata (for frame resolution)
+   */
+  frameMap?: Map<number, IframeInfo>;
+
+  /**
+   * Debug information about frame extraction (for debugging iframe issues)
+   */
+  frameDebugInfo?: FrameDebugInfo[];
 }
 
 /**

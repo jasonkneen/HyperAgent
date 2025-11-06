@@ -53,6 +53,7 @@ export async function buildHierarchicalTree(
   { tagNameMap, xpathMap }: BackendIdMaps,
   frameIndex = 0,
   scrollableIds?: Set<number>,
+  debug = false,
 ): Promise<TreeResult> {
   // Convert raw AX nodes to simplified format, decorating scrollable elements
   const accessibilityNodes = nodes.map((node) => convertAXNode(node, scrollableIds));
@@ -68,6 +69,9 @@ export async function buildHierarchicalTree(
 
   // Map to store processed nodes
   const nodeMap = new Map<string, RichNode>();
+
+  // DEBUG: Track encodedId assignment
+  const encodedIdAssignments = new Map<EncodedId, number>();
 
   // Pass 1: Copy and filter nodes we want to keep
   for (const node of accessibilityNodes) {
@@ -86,14 +90,54 @@ export async function buildHierarchicalTree(
     let encodedId: EncodedId | undefined;
     if (node.backendDOMNodeId !== undefined) {
       const matches = backendToIds.get(node.backendDOMNodeId) ?? [];
-      if (matches.length === 1) {
-        // Unique backend ID - use it
-        encodedId = matches[0];
-      } else if (matches.length === 0) {
+
+      if (matches.length === 0) {
         // Not in DOM map - generate fallback ID
         encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
+        if (debug) {
+          console.log(
+            `[buildHierarchicalTree] Frame ${frameIndex}: backendNodeId=${node.backendDOMNodeId} not in DOM map, using fallback encodedId="${encodedId}" (role=${node.role}, nodeId=${node.nodeId})`
+          );
+        }
+      } else {
+        // One or more matches - filter by frameIndex to find the correct one
+        const framePrefix = `${frameIndex}-`;
+        const frameMatch = matches.find(id => id.startsWith(framePrefix));
+
+        if (debug) {
+          console.log(
+            `[buildHierarchicalTree] Frame ${frameIndex}: backendNodeId=${node.backendDOMNodeId} has ${matches.length} DOM matches: [${matches.join(', ')}] (role=${node.role}, nodeId=${node.nodeId})`
+          );
+        }
+
+        if (frameMatch) {
+          // Found exact match for this frame
+          encodedId = frameMatch;
+          if (debug) {
+            console.log(
+              `  ✓ Matched to encodedId="${encodedId}" for frame ${frameIndex}`
+            );
+          }
+        } else {
+          // No match for this frame - generate fallback
+          encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
+          if (debug) {
+            console.log(
+              `  ✗ No match for frame ${frameIndex}, using fallback encodedId="${encodedId}"`
+            );
+          }
+        }
       }
-      // If multiple matches, leave encodedId undefined
+    }
+
+    // DEBUG: Track encodedId assignments to detect duplicates
+    if (encodedId) {
+      encodedIdAssignments.set(encodedId, (encodedIdAssignments.get(encodedId) || 0) + 1);
+      if (encodedIdAssignments.get(encodedId)! > 1) {
+        console.error(
+          `[buildHierarchicalTree] ⚠️ DUPLICATE encodedId assignment: "${encodedId}" assigned ${encodedIdAssignments.get(encodedId)} times (frame ${frameIndex}, backendNodeId=${node.backendDOMNodeId}, role=${node.role})`
+        );
+      }
     }
 
     // Store node with encodedId
