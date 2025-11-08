@@ -2,6 +2,9 @@
  * Build hierarchical accessibility tree from flat CDP nodes
  */
 
+import type { Page, Frame } from "playwright-core";
+import * as fs from "fs";
+import * as path from "path";
 import {
   AXNode,
   AccessibilityNode,
@@ -9,16 +12,27 @@ import {
   TreeResult,
   EncodedId,
   BackendIdMaps,
-} from './types';
-import { cleanStructuralNodes, formatSimplifiedTree, isInteractive, createEncodedId } from './utils';
-import { decorateRoleIfScrollable } from './scrollable-detection';
+  DOMRect,
+} from "./types";
+import {
+  cleanStructuralNodes,
+  formatSimplifiedTree,
+  isInteractive,
+  createEncodedId,
+  generateFrameHeader,
+} from "./utils";
+import { decorateRoleIfScrollable } from "./scrollable-detection";
+import { batchCollectBoundingBoxesWithFailures } from "./bounding-box-batch";
 
 /**
  * Convert raw CDP AXNode to simplified AccessibilityNode
  * Optionally decorates role with "scrollable" prefix if element is scrollable
  */
-function convertAXNode(node: AXNode, scrollableIds?: Set<number>): AccessibilityNode {
-  const baseRole = node.role?.value ?? 'unknown';
+function convertAXNode(
+  node: AXNode,
+  scrollableIds?: Set<number>
+): AccessibilityNode {
+  const baseRole = node.role?.value ?? "unknown";
 
   // Decorate role if element is scrollable
   const role = scrollableIds
@@ -46,32 +60,98 @@ function convertAXNode(node: AXNode, scrollableIds?: Set<number>): Accessibility
  * @param xpathMap - Map of encoded IDs to XPaths
  * @param frameIndex - Frame index for encoded ID generation
  * @param scrollableIds - Set of backend node IDs that are scrollable
+ * @param debug - Whether to collect debug information
+ * @param enableVisualMode - Whether to collect bounding boxes for visual overlay
+ * @param pageOrFrame - Playwright Page or Frame for batch bounding box collection
+ * @param debugDir - Directory to write debug files
  * @returns TreeResult with cleaned tree, simplified text, and maps
  */
 export async function buildHierarchicalTree(
   nodes: AXNode[],
-  { tagNameMap, xpathMap }: BackendIdMaps,
+  { tagNameMap, xpathMap, frameMap }: BackendIdMaps,
   frameIndex = 0,
   scrollableIds?: Set<number>,
   debug = false,
+  enableVisualMode = false,
+  pageOrFrame?: Page | Frame,
+  debugDir?: string
 ): Promise<TreeResult> {
   // Convert raw AX nodes to simplified format, decorating scrollable elements
-  const accessibilityNodes = nodes.map((node) => convertAXNode(node, scrollableIds));
-
-  // Build "backendId → EncodedId[]" lookup
-  const backendToIds = new Map<number, EncodedId[]>();
-  for (const enc of Object.keys(tagNameMap) as EncodedId[]) {
-    const [, backend] = enc.split('-');
-    const list = backendToIds.get(+backend) ?? [];
-    list.push(enc);
-    backendToIds.set(+backend, list);
-  }
+  const accessibilityNodes = nodes.map((node) =>
+    convertAXNode(node, scrollableIds)
+  );
 
   // Map to store processed nodes
   const nodeMap = new Map<string, RichNode>();
 
-  // DEBUG: Track encodedId assignment
-  const encodedIdAssignments = new Map<EncodedId, number>();
+  // Map to store bounding boxes (only if visual mode enabled)
+  let boundingBoxMap = new Map<EncodedId, DOMRect>();
+  let boundingBoxFailures: Array<{ encodedId: EncodedId; backendNodeId: number }> = [];
+
+  // Batch collect bounding boxes BEFORE Pass 1 if visual mode enabled
+  if ((debug || enableVisualMode) && pageOrFrame) {
+    // First pass: identify nodes we want to keep and collect their info
+    const nodesToCollect: Array<{ backendDOMNodeId?: number; encodedId?: EncodedId }> = [];
+
+    for (const node of accessibilityNodes) {
+      // Skip nodes without nodeId or negative pseudo-nodes
+      if (!node.nodeId || +node.nodeId < 0) continue;
+
+      // Keep nodes that have:
+      // - A name (visible text)
+      // - Children (structural importance)
+      // - Interactive role
+      const keep =
+        node.name?.trim() || node.childIds?.length || isInteractive(node);
+      if (!keep) continue;
+
+      // Create encoded ID
+      let encodedId: EncodedId | undefined;
+      if (node.backendDOMNodeId !== undefined) {
+        encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
+      }
+
+      if (node.backendDOMNodeId !== undefined && encodedId) {
+        nodesToCollect.push({
+          backendDOMNodeId: node.backendDOMNodeId,
+          encodedId,
+        });
+      }
+    }
+
+    // Batch collect all bounding boxes in a single page.evaluate call
+    if (nodesToCollect.length > 0) {
+      const startTime = Date.now();
+      const result = await batchCollectBoundingBoxesWithFailures(
+        pageOrFrame,
+        xpathMap,
+        nodesToCollect,
+        frameIndex,
+        frameMap
+      );
+      const duration = Date.now() - startTime;
+
+      boundingBoxMap = result.boundingBoxMap;
+      boundingBoxFailures = result.failures;
+
+      if (debug) {
+        console.debug(
+          `[A11y] Frame ${frameIndex}: Batch collected ${boundingBoxMap.size}/${nodesToCollect.length} bounding boxes in ${duration}ms (${boundingBoxFailures.length} elements without layout)`
+        );
+      }
+
+      // Write failures to debug file
+      if (debugDir && boundingBoxFailures.length > 0) {
+        const failureDetails = boundingBoxFailures
+          .map(f => `${f.encodedId} (backendNodeId=${f.backendNodeId})`)
+          .join('\n');
+        fs.writeFileSync(
+          path.join(debugDir, `frame-${frameIndex}-bounding-box-failures.txt`),
+          `Failed to get bounding boxes for ${boundingBoxFailures.length} elements:\n\n${failureDetails}\n`
+        );
+      }
+    }
+  }
 
   // Pass 1: Copy and filter nodes we want to keep
   for (const node of accessibilityNodes) {
@@ -86,62 +166,15 @@ export async function buildHierarchicalTree(
       node.name?.trim() || node.childIds?.length || isInteractive(node);
     if (!keep) continue;
 
-    // Resolve encoded ID (unique per backendId)
+    // Resolve encoded ID - directly construct from frameIndex and backendNodeId
+    // EncodedId format is "frameIndex-backendNodeId", no complex lookup needed
     let encodedId: EncodedId | undefined;
     if (node.backendDOMNodeId !== undefined) {
-      const matches = backendToIds.get(node.backendDOMNodeId) ?? [];
-
-      if (matches.length === 0) {
-        // Not in DOM map - generate fallback ID
-        encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
-        if (debug) {
-          console.log(
-            `[buildHierarchicalTree] Frame ${frameIndex}: backendNodeId=${node.backendDOMNodeId} not in DOM map, using fallback encodedId="${encodedId}" (role=${node.role}, nodeId=${node.nodeId})`
-          );
-        }
-      } else {
-        // One or more matches - filter by frameIndex to find the correct one
-        const framePrefix = `${frameIndex}-`;
-        const frameMatch = matches.find(id => id.startsWith(framePrefix));
-
-        if (debug) {
-          console.log(
-            `[buildHierarchicalTree] Frame ${frameIndex}: backendNodeId=${node.backendDOMNodeId} has ${matches.length} DOM matches: [${matches.join(', ')}] (role=${node.role}, nodeId=${node.nodeId})`
-          );
-        }
-
-        if (frameMatch) {
-          // Found exact match for this frame
-          encodedId = frameMatch;
-          if (debug) {
-            console.log(
-              `  ✓ Matched to encodedId="${encodedId}" for frame ${frameIndex}`
-            );
-          }
-        } else {
-          // No match for this frame - generate fallback
-          encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
-          if (debug) {
-            console.log(
-              `  ✗ No match for frame ${frameIndex}, using fallback encodedId="${encodedId}"`
-            );
-          }
-        }
-      }
-    }
-
-    // DEBUG: Track encodedId assignments to detect duplicates
-    if (encodedId) {
-      encodedIdAssignments.set(encodedId, (encodedIdAssignments.get(encodedId) || 0) + 1);
-      if (encodedIdAssignments.get(encodedId)! > 1) {
-        console.error(
-          `[buildHierarchicalTree] ⚠️ DUPLICATE encodedId assignment: "${encodedId}" assigned ${encodedIdAssignments.get(encodedId)} times (frame ${frameIndex}, backendNodeId=${node.backendDOMNodeId}, role=${node.role})`
-        );
-      }
+      encodedId = createEncodedId(frameIndex, node.backendDOMNodeId);
     }
 
     // Store node with encodedId
-    nodeMap.set(node.nodeId, {
+    const richNode: RichNode = {
       encodedId,
       role: node.role,
       nodeId: node.nodeId,
@@ -151,7 +184,15 @@ export async function buildHierarchicalTree(
       ...(node.backendDOMNodeId !== undefined && {
         backendDOMNodeId: node.backendDOMNodeId,
       }),
-    });
+    };
+
+    nodeMap.set(node.nodeId, richNode);
+
+    // Attach bounding box if it was collected in batch
+    if (encodedId && boundingBoxMap.has(encodedId)) {
+      const boundingBox = boundingBoxMap.get(encodedId)!;
+      richNode.boundingBox = boundingBox;
+    }
   }
 
   // Pass 2: Wire parent-child relationships
@@ -173,13 +214,19 @@ export async function buildHierarchicalTree(
 
   // Pass 4: Clean structural nodes
   const cleanedRoots = (
-    await Promise.all(
-      roots.map((n) => cleanStructuralNodes(n, tagNameMap)),
-    )
+    await Promise.all(roots.map((n) => cleanStructuralNodes(n, tagNameMap)))
   ).filter(Boolean) as AccessibilityNode[];
 
   // Pass 5: Generate simplified text tree
-  const simplified = cleanedRoots.map(formatSimplifiedTree).join('\n');
+  const treeContent = cleanedRoots.map(formatSimplifiedTree).join("\n");
+
+  // Pass 5.5: Prepend frame header
+  const frameInfo = frameMap?.get(frameIndex);
+  const framePath =
+    frameInfo?.framePath ||
+    (frameIndex === 0 ? ["Main"] : [`Frame ${frameIndex}`]);
+  const header = generateFrameHeader(frameIndex, framePath);
+  const simplified = `${header}\n${treeContent}`;
 
   // Pass 6: Build idToElement map for quick lookup
   const idToElement = new Map<EncodedId, AccessibilityNode>();
@@ -193,10 +240,23 @@ export async function buildHierarchicalTree(
 
   cleanedRoots.forEach((root) => collectNodes(root as RichNode));
 
+  // Pass 7: Build final bounding box map from cleaned tree only
+  // This ensures the visual overlay only shows elements that made it through tree cleaning
+  const finalBoundingBoxMap = new Map<EncodedId, DOMRect>();
+  if (enableVisualMode) {
+    for (const encodedId of idToElement.keys()) {
+      const boundingBox = boundingBoxMap.get(encodedId);
+      if (boundingBox) {
+        finalBoundingBoxMap.set(encodedId, boundingBox);
+      }
+    }
+  }
+
   return {
     tree: cleanedRoots,
     simplified,
     xpathMap,
     idToElement,
+    ...(enableVisualMode && { boundingBoxMap: finalBoundingBoxMap }),
   };
 }

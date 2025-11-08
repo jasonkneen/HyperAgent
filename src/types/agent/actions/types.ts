@@ -1,5 +1,5 @@
 import { Page } from "playwright-core";
-import { DOMState } from "../../../context-providers/dom/types";
+import { A11yDOMState } from "../../../context-providers/a11y-dom/types";
 import { HyperAgentLLM } from "@/llm/types";
 import { z } from "zod";
 import { MCPClient } from "../../../agent/mcp/client";
@@ -8,19 +8,21 @@ import { ActionConfig } from "@/types/config";
 
 export interface ActionContext {
   page: Page;
-  domState: DOMState;
+  domState: A11yDOMState;
   llm: HyperAgentLLM;
   tokenLimit: number;
   variables: HyperVariable[];
   debugDir?: string;
   mcpClient?: MCPClient;
   actionConfig?: ActionConfig;
+  debug?: boolean;
 }
 
 export interface ActionOutput {
   success: boolean;
   message: string;
   extract?: object;
+  debug?: any;
 }
 
 export type ActionSchemaType = z.ZodObject<{
@@ -30,7 +32,9 @@ export type ActionSchemaType = z.ZodObject<{
 
 export type ActionType = z.infer<ActionSchemaType>;
 
-export interface AgentActionDefinition<T extends z.ZodType<any> = z.ZodType<any>> {
+export interface AgentActionDefinition<
+  T extends z.ZodType<any> = z.ZodType<any>,
+> {
   readonly type: string;
   actionParams: T;
 

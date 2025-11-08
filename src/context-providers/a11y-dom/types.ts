@@ -32,6 +32,20 @@ export interface AXNode {
 }
 
 /**
+ * Bounding box information for an element
+ */
+export interface DOMRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+}
+
+/**
  * Simplified AccessibilityNode with parsed values
  * Used for tree building and filtering
  */
@@ -52,6 +66,10 @@ export interface AccessibilityNode {
       value?: string;
     };
   }>;
+  /**
+   * Bounding box data (only populated when enableVisualMode is true)
+   */
+  boundingBox?: DOMRect;
 }
 
 /**
@@ -79,12 +97,13 @@ export interface IframeInfo {
   src?: string;
   name?: string;
   xpath: string;
-  cdpFrameId?: string;  // CDP frameId (not unique, kept for debugging)
-  parentFrameIndex: number;  // Parent frame index (0 for main frame's children)
-  siblingPosition: number;  // Position among siblings with same (parent, URL)
-  iframeBackendNodeId?: number;  // backendNodeId of the <iframe> element (for debugging)
-  contentDocumentBackendNodeId?: number;  // backendNodeId of the iframe's content document root (for getPartialAXTree)
-  playwrightFrame?: Frame;  // Playwright Frame object (for OOPIF frame resolution)
+  cdpFrameId?: string; // CDP frameId (not unique, kept for debugging)
+  parentFrameIndex: number | null; // Parent frame index (null for root frames, 0 for main frame's children)
+  siblingPosition: number; // Position among siblings with same (parent, URL)
+  iframeBackendNodeId?: number; // backendNodeId of the <iframe> element (for debugging)
+  contentDocumentBackendNodeId?: number; // backendNodeId of the iframe's content document root (for getPartialAXTree)
+  playwrightFrame?: Frame; // Playwright Frame object (for OOPIF frame resolution)
+  framePath?: string[]; // Full hierarchy path (e.g., ["Main", "Frame 1", "Frame 2"])
 }
 
 /**
@@ -94,8 +113,8 @@ export interface IframeInfo {
 export interface BackendIdMaps {
   tagNameMap: Record<EncodedId, string>;
   xpathMap: Record<EncodedId, string>;
-  accessibleNameMap: Record<EncodedId, string>;  // Maps encodedId to accessible names from aria-label/title/placeholder
-  frameMap?: Map<number, IframeInfo>;  // Maps frameIndex to iframe metadata
+  accessibleNameMap: Record<EncodedId, string>; // Maps encodedId to accessible names from aria-label/title/placeholder
+  frameMap?: Map<number, IframeInfo>; // Maps frameIndex to iframe metadata
 }
 
 /**
@@ -119,6 +138,10 @@ export interface TreeResult {
   simplified: string;
   xpathMap: Record<EncodedId, string>;
   idToElement: Map<EncodedId, AccessibilityNode>;
+  /**
+   * Map of encodedId to bounding box (only when enableVisualMode is true)
+   */
+  boundingBoxMap?: Map<EncodedId, DOMRect>;
 }
 
 /**
@@ -131,7 +154,7 @@ export interface A11yDOMConfig {
    * - 'hybrid': Text tree + clean screenshot
    * - 'visual-debug': Text tree + DOM injection + bounding boxes
    */
-  mode?: 'a11y' | 'hybrid' | 'visual-debug';
+  mode?: "a11y" | "hybrid" | "visual-debug";
 
   /**
    * Whether to inject data-hyperagent-id attributes into DOM
@@ -217,6 +240,16 @@ export interface A11yDOMState {
    * Debug information about frame extraction (for debugging iframe issues)
    */
   frameDebugInfo?: FrameDebugInfo[];
+
+  /**
+   * Map of encodedId to bounding box (only when enableVisualMode is true)
+   */
+  boundingBoxMap?: Map<EncodedId, DOMRect>;
+
+  /**
+   * Visual overlay PNG as base64 string (only when enableVisualMode is true)
+   */
+  visualOverlay?: string;
 }
 
 /**
@@ -224,43 +257,43 @@ export interface A11yDOMState {
  * Based on ARIA roles and common interactive elements
  */
 export const INTERACTIVE_ROLES = new Set([
-  'button',
-  'link',
-  'textbox',
-  'searchbox',
-  'combobox',
-  'listbox',
-  'option',
-  'checkbox',
-  'radio',
-  'radiogroup',
-  'switch',
-  'tab',
-  'tablist',
-  'menu',
-  'menubar',
-  'menuitem',
-  'menuitemcheckbox',
-  'menuitemradio',
-  'slider',
-  'spinbutton',
-  'grid',
-  'gridcell',
-  'tree',
-  'treeitem',
-  'row',
-  'cell',
-  'columnheader',
-  'rowheader',
-  'heading',
-  'img',
-  'figure',
+  "button",
+  "link",
+  "textbox",
+  "searchbox",
+  "combobox",
+  "listbox",
+  "option",
+  "checkbox",
+  "radio",
+  "radiogroup",
+  "switch",
+  "tab",
+  "tablist",
+  "menu",
+  "menubar",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "slider",
+  "spinbutton",
+  "grid",
+  "gridcell",
+  "tree",
+  "treeitem",
+  "row",
+  "cell",
+  "columnheader",
+  "rowheader",
+  "heading",
+  "img",
+  "figure",
 ]);
 
 /**
  * Structural roles to replace with tag names
  */
-export const STRUCTURAL_ROLES = new Set(['generic', 'none', 'StaticText']);
+export const STRUCTURAL_ROLES = new Set(["generic", "none", "StaticText"]);
 
 /**
  * Pattern to validate encoded IDs (frameIndex-nodeIndex)
@@ -280,7 +313,9 @@ export function isEncodedId(id: string): id is EncodedId {
  */
 export function toEncodedId(id: string): EncodedId {
   if (!isEncodedId(id)) {
-    throw new Error(`Invalid EncodedId format: "${id}". Expected format: "number-number"`);
+    throw new Error(
+      `Invalid EncodedId format: "${id}". Expected format: "number-number"`
+    );
   }
   return id;
 }
