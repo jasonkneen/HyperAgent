@@ -1,6 +1,6 @@
 {
   "name": "@hyperbrowser/agent",
-  "version": "0.12.0",
+  "version": "1.0.0",
   "description": "Hyperbrowsers Web Agent",
   "author": "",
   "main": "dist/index.js",
@@ -37,7 +37,7 @@
     "ai"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
+    "@anthropic-ai/sdk": "^0.69.0",
     "@google/genai": "^1.28.0",
     "@hyperbrowser/sdk": "^0.46.0",
     "@inquirer/prompts": "^7.4.1",

@@ -29,8 +29,8 @@ export class ActionNotFoundError extends Error {
 const DEFAULT_ACTIONS = [
   // Navigation actions
   GoToURLActionDefinition,
-  PageBackActionDefinition,
-  PageForwardActionDefinition,
+  // PageBackActionDefinition,
+  // PageForwardActionDefinition,
   RefreshPageActionDefinition,
 
   // Element interaction (natural language)
@@ -38,7 +38,7 @@ const DEFAULT_ACTIONS = [
 
   // Other actions
   ExtractActionDefinition,
-  ThinkingActionDefinition,
+  // ThinkingActionDefinition, // Disabled: agents waste steps thinking instead of acting; thoughts field already provides reasoning
   WaitActionDefinition,
 ];
 

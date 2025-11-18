@@ -2,9 +2,66 @@
  * Build backend ID maps for DOM traversal and xpath generation
  */
 
-import { CDPSession } from "playwright-core";
-import { DOMNode, BackendIdMaps, EncodedId, IframeInfo } from "./types";
+import type { CDPSession } from "@/cdp";
+import {
+  DOMNode,
+  BackendIdMaps,
+  EncodedId,
+  IframeInfo,
+  DOMRect,
+} from "./types";
 import { createEncodedId } from "./utils";
+
+async function annotateIframeBoundingBoxes(
+  session: CDPSession,
+  frameMap: Map<number, IframeInfo>,
+  debug: boolean
+): Promise<void> {
+  if (!frameMap.size) {
+    return;
+  }
+
+  for (const [frameIndex, frameInfo] of frameMap.entries()) {
+    if (!frameInfo.iframeBackendNodeId) continue;
+    try {
+      const response = await session.send<{
+        model: {
+          content?: number[];
+        };
+      }>("DOM.getBoxModel", {
+        backendNodeId: frameInfo.iframeBackendNodeId,
+      });
+      const content = response?.model?.content;
+      if (!content || content.length < 8) continue;
+
+      const xs = [content[0], content[2], content[4], content[6]];
+      const ys = [content[1], content[3], content[5], content[7]];
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      const rect: DOMRect = {
+        x: left,
+        y: top,
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+      };
+      frameInfo.absoluteBoundingBox = rect;
+    } catch {
+      // error just means it's out of viewport
+      // if (debug) {
+      //   console.warn(
+      //     `[DOM] Failed to compute bounding box for frame ${frameIndex}:`,
+      //     error
+      //   );
+      // }
+    }
+  }
+}
 
 /**
  * Join XPath segments
@@ -52,19 +109,23 @@ function extractAccessibleName(
 export async function buildBackendIdMaps(
   session: CDPSession,
   frameIndex = 0,
-  debug = false
+  debug = false,
+  pierce = true // Default true for main frame, false for OOPIF to avoid capturing transient nested frames
 ): Promise<BackendIdMaps> {
   try {
     // Step 1: Get full DOM tree from CDP
+    // pierce=true: traverses into same-origin iframes (main frame needs this)
+    // pierce=false: stops at iframe boundaries (OOPIF processing - nested OOPIFs have their own sessions)
     const { root } = (await session.send("DOM.getDocument", {
       depth: -1,
-      pierce: true,
+      pierce,
     })) as { root: DOMNode };
 
     // Step 2: Initialize maps
     const tagNameMap: Record<EncodedId, string> = {};
     const xpathMap: Record<EncodedId, string> = {};
     const accessibleNameMap: Record<EncodedId, string> = {}; // Maps encodedId -> accessible name
+    const backendNodeMap: Record<EncodedId, number> = {};
     const frameMap = new Map<number, IframeInfo>(); // Maps frameIndex -> iframe metadata
 
     // Debug: Count DOM nodes by frame (only if debug enabled)
@@ -121,6 +182,7 @@ export async function buildBackendIdMaps(
       const tagName = String(node.nodeName).toLowerCase();
       tagNameMap[encodedId] = tagName;
       xpathMap[encodedId] = path;
+      backendNodeMap[encodedId] = node.backendNodeId;
 
       // Extract and store accessible name if present
       const accessibleName = extractAccessibleName(node.attributes);
@@ -148,13 +210,15 @@ export async function buildBackendIdMaps(
         );
       }
 
-      // Handle iframe content documents
+      // Handle iframe content documents (same-origin iframes only)
+      // OOPIF (cross-origin) iframes won't have contentDocument due to security restrictions
       if (
         node.nodeName &&
         node.nodeName.toLowerCase() === "iframe" &&
         node.contentDocument
       ) {
-        // Assign a new frame index to this iframe's content
+        // Assign a new frame index to this same-origin iframe's content
+        // This frameIndex is based on DOM traversal order (DFS) and is authoritative
         const iframeFrameIndex = nextFrameIndex++;
 
         // Extract iframe attributes for frame resolution
@@ -174,8 +238,15 @@ export async function buildBackendIdMaps(
           }
         }
 
-        // Get CDP frameId for fetching accessibility tree
+        // Try to get CDP frameId (typically undefined for same-origin iframes)
+        // Same-origin iframes usually don't have a frameId in the DOM.getDocument response
+        // because they're pierced inline. We'll match by backendNodeId later in syncFrameContextManager.
         const cdpFrameId = node.contentDocument.frameId;
+        if (debug && !cdpFrameId) {
+          console.log(
+            `[DOM] Same-origin iframe without frameId (expected) - will match by backendNodeId=${node.backendNodeId}`
+          );
+        }
 
         // Track sibling position for this iframe
         const siblingKey = `${currentFrameIndex}:${iframeSrc || "no-src"}`;
@@ -183,15 +254,18 @@ export async function buildBackendIdMaps(
         siblingPositions.set(siblingKey, siblingPosition + 1);
 
         // Store iframe metadata for later frame resolution
+        // Note: cdpFrameId is typically undefined for same-origin iframes in DOM.getDocument response
+        // We rely on iframeBackendNodeId for matching in syncFrameContextManager
         const iframeInfo: IframeInfo = {
           frameIndex: iframeFrameIndex,
           src: iframeSrc,
           name: iframeName,
           xpath: path, // XPath to the iframe element itself
-          cdpFrameId, // CDP frameId (not unique, kept for debugging)
+          frameId: cdpFrameId, // Usually undefined for same-origin
+          cdpFrameId, // Usually undefined for same-origin (kept for debugging)
           parentFrameIndex: currentFrameIndex, // Parent frame
           siblingPosition, // Position among siblings with same parent+URL
-          iframeBackendNodeId: node.backendNodeId, // backendNodeId of <iframe> element
+          iframeBackendNodeId: node.backendNodeId, // backendNodeId of <iframe> element (PRIMARY matching key)
           contentDocumentBackendNodeId: node.contentDocument.backendNodeId, // backendNodeId of content document root
         };
         frameMap.set(iframeFrameIndex, iframeInfo);
@@ -278,13 +352,22 @@ export async function buildBackendIdMaps(
       }
     }
 
-    return { tagNameMap, xpathMap, accessibleNameMap, frameMap };
+    await annotateIframeBoundingBoxes(session, frameMap, debug);
+
+    return {
+      tagNameMap,
+      xpathMap,
+      accessibleNameMap,
+      backendNodeMap,
+      frameMap,
+    };
   } catch (error) {
     console.error("Error building backend ID maps:", error);
     return {
       tagNameMap: {},
       xpathMap: {},
       accessibleNameMap: {},
+      backendNodeMap: {},
       frameMap: new Map(),
     };
   }

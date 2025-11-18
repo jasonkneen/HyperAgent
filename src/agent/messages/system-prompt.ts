@@ -33,15 +33,14 @@ ${OUTPUT_FORMAT}
 ## Element Interaction
 - actElement: Perform action on element using natural language
   * Supported interactions: click, fill, type, press, select, check, uncheck, hover
-  * Scrolling: scrollTo (scroll element to specific position), scrollNextChunk (scroll down one viewport), scrollPrevChunk (scroll up one viewport)
+  * Scrolling: scrollToElement (scroll the chosen element into view), scrollToPercentage (scroll the page/container to a %), scrollNextChunk (scroll down one viewport), scrollPrevChunk (scroll up one viewport)
   * Be specific: mention element type and identifying text
-  * Examples: "click the Login button", "fill 'text' into search box", "scroll to 50% of the page", "scroll down one page"
+  * Examples: "click the Login button", "fill 'text' into search box", "scroll to the pricing section", "scroll to 50% of the page", "scroll down one page"
 
 ## Utilities
 - extract: Extract structured data from the page
 - wait: Use when not confident enough to take action (page loading, elements not visible yet)
 - complete: Mark task as complete (with success/failure)
-- thinking: Think about your course of action (useful for complex tasks or complex pages)
 
 ${EXAMPLE_ACTIONS}
 
@@ -49,7 +48,7 @@ ${EXAMPLE_ACTIONS}
 
 ## Action Rules
 - Return EXACTLY ONE action per step
-- Think step-by-step - one operation at a time
+- Execute step-by-step - one operation at a time
 - After each action, you will see the result and can decide the next step
 - Do not try to predict multiple steps ahead - focus on the immediate next action
 - If you're not confident about what action to take (page loading, unclear state), use the "wait" action
@@ -60,6 +59,7 @@ ${EXAMPLE_ACTIONS}
 - Be specific in your instructions: mention element type and identifying text
 - Examples: "click the Login button", "fill 'user@example.com' into email field"
 - The system will automatically find and interact with elements based on your instruction
+- When choosing \`actElement\`, you MUST include the encoded element ID (e.g., "0-5125"), the CDP method (click/fill/etc.), any arguments, and a confidence score. Encoded IDs come directly from the \`=== Elements ===\` section.
 
 ## Task Completion
 - Only use "complete" when you have fully accomplished everything specified in the task
@@ -68,7 +68,7 @@ ${EXAMPLE_ACTIONS}
 
 ## Getting Unstuck
 - Avoid getting stuck in loops - do not keep repeating the same actions
-- If stuck, try: going back, starting a new search, opening a new tab, using alternative paths, or using the thinking action
+- If stuck, try: going back, starting a new search, opening a new tab, or using alternative paths
 
 ## Special Cases
 - Cookies: Accept or close the banner
