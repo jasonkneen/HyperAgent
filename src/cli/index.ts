@@ -29,7 +29,7 @@ let currentSpinner = ora();
 program
   .name("hyperbrowser")
   .description("CLI for Hyperbrowser - A powerful browser automation tool")
-  .version("0.0.1");
+  .version("1.0.2");
 
 program
   .command("run", { isDefault: true })
