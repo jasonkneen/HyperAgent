@@ -4,7 +4,11 @@
  */
 
 import type { Page } from "playwright-core";
-import { toEncodedId, type IframeInfo, resolveFrameByXPath } from "../../context-providers/a11y-dom";
+import {
+  toEncodedId,
+  type IframeInfo,
+  resolveFrameByXPath,
+} from "../../context-providers/a11y-dom";
 import { HyperagentError } from "../error";
 
 /**

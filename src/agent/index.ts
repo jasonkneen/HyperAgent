@@ -12,6 +12,9 @@ import {
   ActionContext,
   ActionType,
   AgentActionDefinition,
+  ActionCacheOutput,
+  ActionCacheReplayResult,
+  RunFromActionCacheParams,
   endTaskStatuses,
   Task,
   TaskOutput,
@@ -19,6 +22,7 @@ import {
   TaskState,
   TaskStatus,
 } from "@/types";
+import fs from "fs";
 import {
   CompleteActionDefinition,
   DEFAULT_ACTIONS,
@@ -37,7 +41,13 @@ import {
 } from "../context-providers/a11y-dom/types";
 import { MCPClient } from "./mcp/client";
 import { runAgentTask } from "./tools/agent";
-import { HyperPage, HyperVariable } from "../types/agent/types";
+import type {
+  HyperPage,
+  HyperVariable,
+  ActionCacheEntry,
+  AgentTaskOutput,
+  PerformOptions,
+} from "../types/agent/types";
 import { z } from "zod";
 import { ErrorEmitter } from "../utils";
 import { waitForSettledDOM } from "@/utils/waitForSettledDOM";
@@ -48,6 +58,9 @@ import { markDomSnapshotDirty } from "@/context-providers/a11y-dom/dom-cache";
 import { setDebugOptions } from "@/debug/options";
 import { initializeRuntimeContext } from "./shared/runtime-context";
 import { performAction } from "./actions/shared/perform-action";
+import { createScriptFromActionCache } from "./shared/action-cache-script";
+import { attachCachedActionHelpers } from "./shared/action-cache-exec";
+import { AgentDeps } from "@/types/agent/types";
 
 export class HyperAgent<T extends BrowserProviders = "Local"> {
   // aiAction configuration constants
@@ -71,6 +84,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
   private browserProviderType: T;
   private actions: Array<AgentActionDefinition> = [...DEFAULT_ACTIONS];
   private cdpActionsEnabled: boolean;
+  private actionCacheByTaskId: Record<string, ActionCacheOutput> = {};
 
   public browser: Browser | null = null;
   public context: BrowserContext | null = null;
@@ -248,6 +262,15 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     delete this._variables[key];
   }
 
+  public getActionCache(taskId: string): ActionCacheOutput | null {
+    const cache = this.actionCacheByTaskId[taskId];
+    if (!cache) return null;
+    return {
+      ...cache,
+      steps: [...cache.steps],
+    };
+  }
+
   /**
    * Get all pages in the context
    * @returns Array of HyperPage objects
@@ -352,6 +375,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       throw new HyperagentError(`Task ${taskId} not found`);
     }
     return {
+      id: taskId,
       getStatus: () => taskState.status,
       pause: () => {
         if (taskState.status === TaskStatus.RUNNING) {
@@ -432,7 +456,10 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
       taskState,
       mergedParams
     )
-      .then(() => cleanup())
+      .then((result) => {
+        this.actionCacheByTaskId[taskId] = result.actionCache;
+        cleanup();
+      })
       .catch((error: Error) => {
         cleanup();
         // Retrieve the correct state to update
@@ -463,7 +490,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     task: string,
     params?: TaskParams,
     initPage?: Page
-  ): Promise<TaskOutput> {
+  ): Promise<AgentTaskOutput> {
     const taskId = uuidv4();
     let activeTaskPage = initPage || (await this.getCurrentPage());
 
@@ -510,12 +537,312 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
         mergedParams
       );
       this.context?.off("page", onPage);
+      this.actionCacheByTaskId[taskId] = result.actionCache;
       return result;
     } catch (error) {
       this.context?.off("page", onPage);
       taskState.status = TaskStatus.FAILED;
       throw error;
     }
+  }
+
+  public async runFromActionCache(
+    cache: ActionCacheOutput,
+    pageOrGetter: Page | (() => Page),
+    params?: RunFromActionCacheParams
+  ): Promise<ActionCacheReplayResult> {
+    const replayId = uuidv4();
+    const maxXPathRetries = params?.maxXPathRetries ?? 3;
+    const debug = params?.debug ?? this.debug;
+    const getPage = () =>
+      typeof pageOrGetter === "function" ? pageOrGetter() : pageOrGetter;
+
+    const stepsResult: ActionCacheReplayResult["steps"] = [];
+    let replayStatus: TaskStatus.COMPLETED | TaskStatus.FAILED =
+      TaskStatus.COMPLETED;
+
+    /**
+     * Type-safe dispatch for HyperPage perform* methods.
+     * Explicitly routes to the correct method with proper typing.
+     *
+     * Methods that require a value argument (second param): type, fill, press, selectOptionFromDropdown, scrollToPercentage
+     * Methods with only xpath and options: click, hover, check, uncheck, scrollToElement, nextChunk, prevChunk
+     */
+    const dispatchPerformHelper = (
+      hp: HyperPage,
+      method: string,
+      xpath: string,
+      value: string | undefined,
+      options: PerformOptions
+    ): Promise<TaskOutput> => {
+      switch (method) {
+        case "click":
+          return hp.performClick(xpath, options);
+        case "hover":
+          return hp.performHover(xpath, options);
+        case "type":
+          return hp.performType(xpath, value ?? "", options);
+        case "fill":
+          return hp.performFill(xpath, value ?? "", options);
+        case "press":
+          return hp.performPress(xpath, value ?? "", options);
+        case "selectOptionFromDropdown":
+          return hp.performSelectOption(xpath, value ?? "", options);
+        case "check":
+          return hp.performCheck(xpath, options);
+        case "uncheck":
+          return hp.performUncheck(xpath, options);
+        case "scrollToElement":
+          return hp.performScrollToElement(xpath, options);
+        case "scrollToPercentage":
+          return hp.performScrollToPercentage(xpath, value ?? "", options);
+        case "nextChunk":
+          return hp.performNextChunk(xpath, options);
+        case "prevChunk":
+          return hp.performPrevChunk(xpath, options);
+        default:
+          throw new Error(`Unknown perform helper method: ${method}`);
+      }
+    };
+
+    /** Set of valid method names that can be dispatched */
+    const validHelperMethods = new Set([
+      "click",
+      "fill",
+      "type",
+      "press",
+      "selectOptionFromDropdown",
+      "check",
+      "uncheck",
+      "hover",
+      "scrollToElement",
+      "scrollToPercentage",
+      "nextChunk",
+      "prevChunk",
+    ]);
+
+    for (const step of [...cache.steps].sort(
+      (a, b) => a.stepIndex - b.stepIndex
+    )) {
+      const page = getPage();
+      const hyperPage = page as HyperPage;
+      let result: TaskOutput;
+
+      if (step.actionType === "goToUrl") {
+        const url =
+          (step.arguments && step.arguments[0]) ||
+          (step.actionParams as any)?.url ||
+          "";
+        if (!url || typeof url !== "string") {
+          result = {
+            taskId: cache.taskId,
+            status: TaskStatus.FAILED,
+            steps: [],
+            output: "Missing URL for goToUrl",
+          };
+        } else {
+          await hyperPage.goto(url, { waitUntil: "domcontentloaded" });
+          await waitForSettledDOM(hyperPage);
+          markDomSnapshotDirty(hyperPage);
+          result = {
+            taskId: cache.taskId,
+            status: TaskStatus.COMPLETED,
+            steps: [],
+            output: `Navigated to ${url}`,
+            replayStepMeta: {
+              usedCachedAction: true,
+              fallbackUsed: false,
+              retries: 0,
+              cachedXPath: null,
+              fallbackXPath: null,
+              fallbackElementId: null,
+            },
+          };
+        }
+      } else if (step.actionType === "complete") {
+        result = {
+          taskId: cache.taskId,
+          status: TaskStatus.COMPLETED,
+          steps: [],
+          output: "Task Complete",
+          replayStepMeta: {
+            usedCachedAction: true,
+            fallbackUsed: false,
+            retries: 0,
+            cachedXPath: null,
+            fallbackXPath: null,
+            fallbackElementId: null,
+          },
+        };
+      } else if (step.actionType === "refreshPage") {
+        await hyperPage.reload({ waitUntil: "domcontentloaded" });
+        await waitForSettledDOM(hyperPage);
+        markDomSnapshotDirty(hyperPage);
+        result = {
+          taskId: cache.taskId,
+          status: TaskStatus.COMPLETED,
+          steps: [],
+          output: "Page refreshed",
+          actionCache: {
+            taskId: cache.taskId,
+            createdAt: cache.createdAt,
+            status: TaskStatus.COMPLETED,
+            steps: [],
+          },
+          replayStepMeta: {
+            usedCachedAction: true,
+            fallbackUsed: false,
+            retries: 0,
+            cachedXPath: null,
+            fallbackXPath: null,
+            fallbackElementId: null,
+          },
+        };
+      } else if (step.actionType === "wait") {
+        const durationRaw =
+          (step.arguments && step.arguments[0]) ||
+          (step.actionParams as any)?.duration;
+        const durationMs =
+          typeof durationRaw === "number"
+            ? durationRaw
+            : Number.parseInt(String(durationRaw ?? ""), 10);
+        const waitMs = Number.isFinite(durationMs) ? durationMs : 1000;
+        await hyperPage.waitForTimeout(waitMs);
+        result = {
+          taskId: cache.taskId,
+          status: TaskStatus.COMPLETED,
+          steps: [],
+          output: `Waited ${waitMs}ms`,
+          actionCache: {
+            taskId: cache.taskId,
+            createdAt: cache.createdAt,
+            status: TaskStatus.COMPLETED,
+            steps: [],
+          },
+          replayStepMeta: {
+            usedCachedAction: true,
+            fallbackUsed: false,
+            retries: 0,
+            cachedXPath: null,
+            fallbackXPath: null,
+            fallbackElementId: null,
+          },
+        };
+      } else if (step.actionType === "extract") {
+        try {
+          const extractResult = await hyperPage.extract(step.instruction);
+          result = {
+            taskId: cache.taskId,
+            status: TaskStatus.COMPLETED,
+            steps: [],
+            output:
+              typeof extractResult === "string"
+                ? extractResult
+                : JSON.stringify(extractResult),
+            replayStepMeta: {
+              usedCachedAction: true,
+              fallbackUsed: false,
+              retries: 0,
+              cachedXPath: null,
+              fallbackXPath: null,
+              fallbackElementId: null,
+            },
+          };
+        } catch (err: any) {
+          result = {
+            taskId: cache.taskId,
+            status: TaskStatus.FAILED,
+            steps: [],
+            output: `Extract failed: ${err?.message || String(err)}`,
+            replayStepMeta: {
+              usedCachedAction: true,
+              fallbackUsed: false,
+              retries: 0,
+              cachedXPath: null,
+              fallbackXPath: null,
+              fallbackElementId: null,
+            },
+          };
+        }
+      } else if (step.actionType === "analyzePdf") {
+        result = {
+          taskId: cache.taskId,
+          status: TaskStatus.FAILED,
+          steps: [],
+          output: "analyzePdf replay is not supported in runFromActionCache.",
+          replayStepMeta: {
+            usedCachedAction: true,
+            fallbackUsed: false,
+            retries: 0,
+            cachedXPath: null,
+            fallbackXPath: null,
+            fallbackElementId: null,
+          },
+        };
+      } else {
+        const method = step.method;
+        if (method && validHelperMethods.has(method)) {
+          const options: PerformOptions = {
+            performInstruction: step.instruction,
+            maxSteps: maxXPathRetries,
+          };
+          if (step.frameIndex !== null && step.frameIndex !== undefined) {
+            options.frameIndex = step.frameIndex;
+          }
+          const valueArg = step.arguments?.[0];
+          result = await dispatchPerformHelper(
+            hyperPage,
+            method,
+            step.xpath ?? "",
+            valueArg,
+            options
+          );
+        } else {
+          result = await hyperPage.perform(step.instruction);
+        }
+      }
+
+      const finalMeta = result.replayStepMeta;
+      const finalSuccess = result.status === TaskStatus.COMPLETED;
+
+      stepsResult.push({
+        stepIndex: step.stepIndex,
+        actionType: step.actionType,
+        usedXPath: finalMeta?.usedCachedAction ?? false,
+        fallbackUsed: finalMeta?.fallbackUsed ?? false,
+        cachedXPath: finalMeta?.cachedXPath ?? null,
+        fallbackXPath: finalMeta?.fallbackXPath ?? null,
+        fallbackElementId: finalMeta?.fallbackElementId ?? null,
+        retries: finalMeta?.retries ?? 0,
+        success: finalSuccess,
+        message:
+          result.output ||
+          (finalSuccess ? "Completed" : "Failed to execute cached action"),
+      });
+
+      if (!finalSuccess) {
+        replayStatus = TaskStatus.FAILED;
+        break;
+      }
+    }
+
+    const replayResult: ActionCacheReplayResult = {
+      replayId,
+      sourceTaskId: cache.taskId,
+      steps: stepsResult,
+      status: replayStatus,
+    };
+
+    if (debug) {
+      const debugDir = "debug/action-cache";
+      fs.mkdirSync(debugDir, { recursive: true });
+      fs.writeFileSync(
+        `${debugDir}/replay-${replayId}.json`,
+        JSON.stringify(replayResult, null, 2)
+      );
+    }
+
+    return replayResult;
   }
 
   /**
@@ -766,6 +1093,7 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     pageOrGetter: Page | (() => Page),
     _params?: TaskParams
   ): Promise<TaskOutput> {
+    const taskId = uuidv4();
     const actionStart = performance.now();
     const startTime = new Date().toISOString();
     if (this.debug) {
@@ -831,7 +1159,8 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
           400
         );
       }
-      let actionXPath: string | undefined;
+      let actionXPath: string | null =
+        domState?.xpathMap?.[element.elementId] ?? null;
 
       // Use shared runtime context
       const { cdpClient, frameContextManager } = await initializeRuntimeContext(
@@ -884,14 +1213,6 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
         confidence: 1, // Implicit confidence for single action
       });
 
-      if (
-        actionOutput.debug &&
-        typeof actionOutput.debug === "object" &&
-        "requestedAction" in actionOutput.debug
-      ) {
-        actionXPath = (actionOutput.debug as any).elementMetadata?.xpath;
-      }
-
       if (!actionOutput.success) {
         throw new Error(actionOutput.message);
       }
@@ -930,9 +1251,24 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
 
       logPerf(this.debug, "[Perf][executeSingleAction] total", actionStart);
       return {
+        taskId,
         status: TaskStatus.COMPLETED,
         steps: [],
         output: `Successfully executed: ${instruction}`,
+        actionCache: {
+          taskId,
+          createdAt: startTime,
+          status: TaskStatus.COMPLETED,
+          steps: [],
+        },
+        replayStepMeta: {
+          usedCachedAction: false,
+          fallbackUsed: false,
+          retries: 1,
+          cachedXPath: null,
+          fallbackXPath: actionXPath ?? null,
+          fallbackElementId: element.elementId ?? null,
+        },
       };
     } catch (error) {
       // If page switched during execution, prioritize that over the error
@@ -1139,6 +1475,13 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     return session;
   }
 
+  public createScriptFromActionCache(
+    steps: ActionCacheEntry[],
+    taskId?: string
+  ): string {
+    return createScriptFromActionCache({ steps, taskId });
+  }
+
   private setupHyperPage(page: Page): HyperPage {
     const hyperPage = page as HyperPage;
 
@@ -1235,6 +1578,21 @@ export class HyperAgent<T extends BrowserProviders = "Local"> {
     hyperPage.aiAction = async (instruction: string, params?: TaskParams) => {
       return executeSingleActionWithRetry(instruction, params);
     };
+
+    hyperPage.getActionCache = (taskId: string) => this.getActionCache(taskId);
+
+    hyperPage.runFromActionCache = (cache, params) =>
+      this.runFromActionCache(cache, getActivePage, params);
+
+    const deps: AgentDeps = {
+      debug: this.debug,
+      tokenLimit: this.tokenLimit,
+      llm: this.llm,
+      mcpClient: this.mcpClient,
+      variables: Object.values(this._variables),
+      cdpActionsEnabled: this.cdpActionsEnabled,
+    };
+    attachCachedActionHelpers(deps, hyperPage);
 
     // aiAsync tasks run in background, so we just use the current scope start point.
     // The task itself has internal auto-following logic (from executeTaskAsync implementation).

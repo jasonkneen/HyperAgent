@@ -12,12 +12,18 @@ import {
   AgentOutputFn,
   AgentOutput,
   AgentStep,
+  ActionCacheEntry,
+  ActionCacheOutput,
+  ActionCacheReplayResult,
+  ActionCacheReplayStepResult,
+  RunFromActionCacheParams,
   TaskParams,
   TaskOutput,
   Task,
   TaskStatus,
   TaskState,
   endTaskStatuses,
+  PerformOptions,
 } from "./agent/types";
 
 // Config Types
@@ -39,11 +45,17 @@ export {
   AgentOutputFn,
   AgentOutput,
   AgentStep,
+  ActionCacheEntry,
+  ActionCacheOutput,
+  ActionCacheReplayResult,
+  ActionCacheReplayStepResult,
+  RunFromActionCacheParams,
   TaskParams,
   TaskOutput,
   Task,
   TaskStatus,
   TaskState,
+  PerformOptions,
 
   // Config Types
   MCPServerConfig,

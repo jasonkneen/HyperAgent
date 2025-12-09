@@ -1,4 +1,8 @@
-import { AgentStep } from "@/types/agent/types";
+import {
+  ActionCacheOutput,
+  AgentStep,
+  AgentTaskOutput,
+} from "@/types/agent/types";
 import fs from "fs";
 
 import { performance } from "perf_hooks";
@@ -22,12 +26,7 @@ import { captureDOMState } from "../shared/dom-capture";
 import { initializeRuntimeContext } from "../shared/runtime-context";
 
 import { AgentOutputFn, endTaskStatuses } from "@hyperbrowser/agent/types";
-import {
-  TaskParams,
-  TaskOutput,
-  TaskState,
-  TaskStatus,
-} from "@hyperbrowser/agent/types";
+import { TaskParams, TaskState, TaskStatus } from "@hyperbrowser/agent/types";
 
 import { HyperagentError } from "../error";
 import { buildAgentStepMessages } from "../messages/builder";
@@ -39,6 +38,7 @@ import { ActionNotFoundError } from "../actions";
 import { AgentCtx } from "./types";
 import { HyperAgentMessage } from "@/llm/types";
 import { Jimp } from "jimp";
+import { buildActionCacheEntry } from "../shared/action-cache";
 
 // DomChunkAggregator logic moved to shared/dom-capture.ts
 
@@ -209,7 +209,7 @@ export const runAgentTask = async (
   ctx: AgentCtx,
   taskState: TaskState,
   params?: TaskParams
-): Promise<TaskOutput> => {
+): Promise<AgentTaskOutput> => {
   const taskStart = performance.now();
   const taskId = taskState.id;
   const debugDir = params?.debugDir || `debug/${taskId}`;
@@ -267,6 +267,7 @@ export const runAgentTask = async (
   const MAX_CONSECUTIVE_FAILURES_OR_WAITS = 5;
   let lastOverlayKey: string | null = null;
   let lastScreenshotBase64: string | undefined;
+  const actionCacheSteps: ActionCacheOutput["steps"] = [];
 
   try {
     // Initialize context at the start of the task
@@ -278,7 +279,9 @@ export const runAgentTask = async (
         const newPage = await ctx.activePage();
         if (newPage && newPage !== page) {
           if (ctx.debug) {
-            console.log(`[Agent] Switching active page context to ${newPage.url()}`);
+            console.log(
+              `[Agent] Switching active page context to ${newPage.url()}`
+            );
           }
           cleanupDomListeners(page);
           page = newPage;
@@ -560,6 +563,14 @@ export const runAgentTask = async (
         markDomSnapshotDirty(page);
       }
 
+      const actionCacheEntry = buildActionCacheEntry({
+        stepIndex: currStep,
+        action,
+        actionOutput,
+        domState,
+      });
+      actionCacheSteps.push(actionCacheEntry);
+
       // Check action result and handle retry logic
       if (action.type === "wait") {
         // Wait action - increment counter
@@ -659,10 +670,26 @@ export const runAgentTask = async (
     cleanupDomListeners(page);
   }
 
-  const taskOutput: TaskOutput = {
+  const actionCache: ActionCacheOutput = {
+    taskId,
+    createdAt: new Date().toISOString(),
+    status: taskState.status,
+    steps: actionCacheSteps,
+  };
+  if (ctx.debug) {
+    fs.mkdirSync(debugDir, { recursive: true });
+    fs.writeFileSync(
+      `${debugDir}/action-cache.json`,
+      JSON.stringify(actionCache, null, 2)
+    );
+  }
+
+  const taskOutput: AgentTaskOutput = {
+    taskId,
     status: taskState.status,
     steps: taskState.steps,
     output,
+    actionCache,
   };
   if (ctx.debug) {
     fs.writeFileSync(
