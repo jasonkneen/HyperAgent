@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/` is the source of truth. `agent/` orchestrates the runtime loop (`tools/agent.ts`), with `shared/` housing DOM capture/runtime utilities and element finding, `examine-dom/` powering `page.aiAction`, `messages/` building prompts, `mcp/` hosting the MCP client, and `error.ts` centralizing agent errors; `debug/options.ts` controls low-level tracing.
+- `src/` is the source of truth. `agent/` orchestrates the runtime loop (`tools/agent.ts`), with `shared/` housing DOM capture/runtime utilities and element finding, `examine-dom/` powering `page.perform` (and deprecated `page.aiAction`), `messages/` building prompts, `mcp/` hosting the MCP client, and `error.ts` centralizing agent errors; `debug/options.ts` controls low-level tracing.
 - `cdp/` wraps Chrome DevTools (client lifecycle, frame graph/context tracking, element resolution, bounding boxes, and action dispatch). `performAction` prefers these CDP paths and falls back to Playwright helpers when disabled.
 - `context-providers/a11y-dom/` is the single DOM provider (accessibility tree + encoded IDs, optional bounding boxes/visual overlays, DOM snapshot cache, streaming). Keep overlay generation (`visual-overlay.ts`) and ID maps (`build-maps.ts`, `dom-cache.ts`) aligned when changing extraction logic. Shared overlay/screenshot helpers live in `context-providers/shared/`.
 - `browser-providers/` implement `LocalBrowserProvider` (Playwright `chromium` channel "chrome" with stealth flags) and `HyperbrowserProvider`; extend these instead of launching browsers directly. Base class is in `types/browser-providers/types.ts`.
@@ -25,9 +25,10 @@
 ## Agent Runtime & Integrations
 - The agent loop (`agent/tools/agent.ts`) captures the accessibility tree via `captureDOMState` (text-first, optional streaming and snapshot cache). Visual overlays/screenshots are opt-in (`enableVisualMode`) and composited with CDP screenshots for `page.ai`.
 - DOM snapshots use encoded IDs (`frameIndex-backendNodeId`) and cache for ~1s when `useDomCache` is true; navigation events and actions call `markDomSnapshotDirty` to invalidate. Ensure new actions mutate the cache appropriately.
-- Default actions live in `agent/actions/index.ts`: `goToURL`, `refreshPage`, `actElement` (unified element action constrained by `AGENT_ELEMENT_ACTIONS`), `extract`, `wait`, plus `pdf` when `GEMINI_API_KEY` is present. `complete` variants are injected by the runtime and cannot be registered manually.
+- Default actions live in `agent/actions/index.ts`: `goToUrl`, `refreshPage`, `actElement` (unified element action constrained by `AGENT_ELEMENT_ACTIONS`), `extract`, `wait`, plus `pdf` when `GEMINI_API_KEY` is present. `complete` variants are injected by the runtime and cannot be registered manually.
 - Element execution is CDP-first (`cdp/resolveElement` + `dispatchCDPAction`); it falls back to Playwright locators when `cdpActions` is false or backend maps are missing. Keep frame graph/bounding-box expectations aligned with `context-providers/a11y-dom` when tweaking extraction.
-- `page.aiAction` uses the `examine-dom/` flow for single actions: accessibility tree → LLM element ranking → `performAction`. It always runs in a11y mode (no screenshots) and shares the same allowed methods as `actElement`.
+- `page.perform` (and the deprecated `page.aiAction` alias) uses the `examine-dom/` flow for single actions: accessibility tree → LLM element ranking → `performAction`. It always runs in a11y mode (no screenshots) and shares the same allowed methods as `actElement`.
+- Action caching is available on `HyperPage` (`getActionCache`, `runFromActionCache`) and implemented in `agent/shared/action-cache*` + `run-cached-action`; keep replays aligned with `actElement` and DOM cache invalidation.
 - MCP integrations live in `agent/mcp/client.ts`; `initializeMCPClient`/`connectToMCPServer` register remote tools as actions. Guard optional dependencies and remember `complete` is reserved.
 - Debugging: pass `debug: true` or `debugOptions` to surface CDP sessions, DOM-capture profiling, and wait tracing; artifacts land under `debug/<taskId>` when enabled.
 
