@@ -14,6 +14,11 @@
 - `examples/`, `docs/`, and `assets/` provide reference flows and media—update alongside API or UX changes. `currentState.md` should mirror major architectural shifts.
 - `evals/` stores baseline datasets; do not hand-edit generated outputs. `dist/` and `cli.sh` are generated—modify source, then run `yarn build` rather than editing them directly.
 
+## Directory-Scoped AGENTS Files
+- Additional `AGENTS.md` files exist in key subdirectories (`src/`, `src/agent/`, `src/cdp/`, `src/context-providers/`, `src/browser-providers/`, `src/llm/`, `src/types/`, `src/utils/`, `src/cli/`, `src/custom-actions/`, `src/debug/`, `scripts/`, `examples/`, `docs/`, `evals/`, and `assets/`).
+- Apply root guidance everywhere, then apply the nearest directory `AGENTS.md` for local constraints.
+- Subdirectory files are additive and should refine local implementation details without contradicting root policy.
+
 ## Build, Test, and Development Commands
 - `yarn build` wipes `dist/`, runs `tsc` + `tsc-alias`, and restores executable bits on `dist/cli/index.js` and `cli.sh`; run before publishing or cutting releases.
 - `yarn lint` / `yarn format` use the flat ESLint config (`eslint.config.mjs`) and Prettier over `src/**/*.ts`; fix warnings instead of suppressing rules.
